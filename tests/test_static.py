@@ -208,15 +208,21 @@ class StaticContractTests(unittest.TestCase):
 
     def test_release_versions_are_aligned(self) -> None:
         expected = "1.3.0"
+        expected_author = "Jia-Ming Zhou (Felimet)"
         for path in (
             ROOT / ".claude-plugin" / "plugin.json",
             ROOT / ".codex-plugin" / "plugin.json",
         ):
-            self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["version"], expected)
+            manifest = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(manifest["version"], expected)
+            self.assertEqual(manifest["author"]["name"], expected_author)
         skill = (ROOT / "skills" / "mathtype-for-word" / "SKILL.md").read_text(encoding="utf-8")
         server = (ROOT / "scripts" / "mcp_server.py").read_text(encoding="utf-8")
         self.assertIn(f"version: {expected}", skill)
+        self.assertIn(f"author: {expected_author}", skill)
         self.assertIn(f'SERVER_VERSION = "{expected}"', server)
+        for path in (ROOT / "LICENSE", ROOT / "skills" / "mathtype-for-word" / "LICENSE.txt"):
+            self.assertIn(expected_author, path.read_text(encoding="utf-8"))
 
     def test_plugin_packager_excludes_run_artifacts(self) -> None:
         text = (ROOT / "scripts" / "package_plugin.py").read_text(encoding="utf-8")

@@ -3,7 +3,7 @@ name: mathtype-for-word
 description: Create, replace, number, cross-reference, update, inspect, or validate mathematical equations in Microsoft Word DOCX and PowerPoint PPTX using genuine MathType 7 Equation.DSMT4 objects. Use for DOCX or PPTX equation authoring, TeX-to-MathType conversion, consistent IEEE-style mathematical typography, academic Chinese or English prose around formulas, centered displays, MathType Word equation numbers such as (1), the “equation reference goes here” workflow, or repairs that must avoid Word OMath, captions, numbered lists, images, and fake text equations.
 license: MIT
 metadata:
-  author: felim
+  author: Jia-Ming Zhou (Felimet)
   version: 1.3.0
 ---
 
