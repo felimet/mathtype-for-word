@@ -2,7 +2,7 @@
 
 [English](README.md)
 
-讓 AI Agent 在 Microsoft Word 與 PowerPoint 建立可編輯的 MathType 7 公式。Word 文件另支援 MathType 原生公式編號與動態交叉引用。
+可安裝的 AI Agent skill、Codex/Claude plugin 與 MCP server，用於在 Microsoft Word 與 PowerPoint 建立可編輯的 MathType 7 公式；Word 文件另支援 MathType 原生公式編號與動態交叉引用。
 
 ## 功能
 
@@ -47,10 +47,10 @@ pwsh.exe -NoProfile -ExecutionPolicy Bypass -File scripts/mathtype-word.ps1 -Act
 
 ## 透過 AI Agent 安裝
 
-若要在 Claude Code、Claude Desktop、Codex、ChatGPT Desktop 等 AI Agent 使用本工具，先將 `<GITHUB_REPO_URL>` 換成此 repository 的網址，再貼上以下 prompt，Agent 會依目前環境完成設定：
+若要在 Claude Code、Claude Desktop、Codex 或 ChatGPT Desktop 使用本工具，貼上以下 prompt，Agent 會依目前環境完成設定：
 
 ```text
-從 <GITHUB_REPO_URL> 安裝或升級 MathType for Word and PowerPoint toolkit。偵測我目前可用的終端機，並使用 PowerShell 7、Windows 上的 Bash，包括 Git Bash，或 CMD。不可在 Windows PowerShell 5.1 執行 Office bridge；若目前為 5.1，切換至 Git Bash 或 CMD，再呼叫 Windows pwsh.exe。從 WSL Bash 執行時，呼叫 Windows pwsh.exe，不使用 Linux pwsh。若沒有支援的終端機或找不到 pwsh.exe，停止執行並提示我依 https://learn.microsoft.com/zh-tw/powershell/scripting/install/microsoft-update-faq?view=powershell-7.6 安裝 PowerShell 7。確認桌面版 MathType for Windows ProductVersion 7.11.1.462，以及 Microsoft Word 與 PowerPoint 桌面版均可使用；安裝可攜式 skill、註冊本機 stdio MCP server、執行兩項 MathType probe 與 repository 測試、保留既有 Agent 設定，並列出所有異動檔案。輸出未包含可編輯 Equation.DSMT4 物件或 validation 未回傳 ok: true 時，不得宣稱完成。
+從 https://github.com/felimet/mathtype-for-word 安裝或升級 MathType for Word and PowerPoint toolkit。偵測我目前可用的終端機，並使用 PowerShell 7、Windows 上的 Bash，包括 Git Bash，或 CMD。不可在 Windows PowerShell 5.1 執行 Office bridge；若目前為 5.1，切換至 Git Bash 或 CMD，再呼叫 Windows pwsh.exe。從 WSL Bash 執行時，呼叫 Windows pwsh.exe，不使用 Linux pwsh。若沒有支援的終端機或找不到 pwsh.exe，停止執行並提示我依 https://learn.microsoft.com/zh-tw/powershell/scripting/install/microsoft-update-faq?view=powershell-7.6 安裝 PowerShell 7。確認桌面版 MathType for Windows ProductVersion 7.11.1.462，以及 Microsoft Word 與 PowerPoint 桌面版均可使用；安裝可攜式 skill、註冊本機 stdio MCP server、執行兩項 MathType probe 與 repository 測試、保留既有 Agent 設定，並列出所有異動檔案。輸出未包含可編輯 Equation.DSMT4 物件或 validation 未回傳 ok: true 時，不得宣稱完成。
 ```
 
 再告訴 Agent 要處理的 DOCX 或 PPTX，以及需要建立的公式。

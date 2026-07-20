@@ -11,6 +11,10 @@
     "microsoft-word",
     "microsoft-powerpoint",
     "equations",
-    "academic-writing"
+    "academic-writing",
+    "mcp",
+    "claude",
+    "codex",
+    "chatgpt"
   ]
 }

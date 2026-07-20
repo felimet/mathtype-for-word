@@ -2,7 +2,7 @@
 
 [繁體中文](README-zhTW.md)
 
-Create editable MathType 7 equations in Microsoft Word and PowerPoint with an AI agent. Word documents can also use MathType-native equation numbers and dynamic cross-references.
+An installable AI Agent skill, Codex/Claude plugin, and MCP server for creating editable MathType 7 equations in Microsoft Word and PowerPoint. Word documents also support MathType-native equation numbering and dynamic cross-references.
 
 ## Features
 
@@ -47,10 +47,10 @@ pwsh.exe -NoProfile -ExecutionPolicy Bypass -File scripts/mathtype-word.ps1 -Act
 
 ## Install with an AI agent
 
-If you want to use MathType for Word and PowerPoint in your agent, including Claude Code, Claude Desktop, Codex, or ChatGPT Desktop, replace `<GITHUB_REPO_URL>` with this repository URL and paste the following prompt. The agent will configure it for the current environment:
+If you want to use MathType for Word and PowerPoint in Claude Code, Claude Desktop, Codex, or ChatGPT Desktop, paste the following prompt. The agent will configure it for the current environment:
 
 ```text
-Install or upgrade the MathType for Word and PowerPoint toolkit from <GITHUB_REPO_URL>. Detect my available terminal and use PowerShell 7, Bash on Windows including Git Bash, or CMD. Do not run the Office bridge under Windows PowerShell 5.1; if 5.1 is active, switch to Git Bash or CMD and invoke Windows pwsh.exe. From WSL Bash, invoke Windows pwsh.exe rather than Linux pwsh. If no supported terminal or pwsh.exe is available, stop and tell me to install PowerShell 7 using https://learn.microsoft.com/zh-tw/powershell/scripting/install/microsoft-update-faq?view=powershell-7.6. Verify desktop MathType for Windows ProductVersion 7.11.1.462 plus Microsoft Word and PowerPoint desktop, install the portable skill, register the local stdio MCP server, run both MathType probes and the repository tests, preserve existing agent configuration, and report every changed file. Do not claim success unless the outputs contain editable Equation.DSMT4 objects and validation returns ok: true.
+Install or upgrade the MathType for Word and PowerPoint toolkit from https://github.com/felimet/mathtype-for-word. Detect my available terminal and use PowerShell 7, Bash on Windows including Git Bash, or CMD. Do not run the Office bridge under Windows PowerShell 5.1; if 5.1 is active, switch to Git Bash or CMD and invoke Windows pwsh.exe. From WSL Bash, invoke Windows pwsh.exe rather than Linux pwsh. If no supported terminal or pwsh.exe is available, stop and tell me to install PowerShell 7 using https://learn.microsoft.com/zh-tw/powershell/scripting/install/microsoft-update-faq?view=powershell-7.6. Verify desktop MathType for Windows ProductVersion 7.11.1.462 plus Microsoft Word and PowerPoint desktop, install the portable skill, register the local stdio MCP server, run both MathType probes and the repository tests, preserve existing agent configuration, and report every changed file. Do not claim success unless the outputs contain editable Equation.DSMT4 objects and validation returns ok: true.
 ```
 
 Then tell your agent which DOCX or PPTX file to edit and describe the required equations.
