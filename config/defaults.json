@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "numbering": {
+    "mode": "simple",
+    "chapter_number": false,
+    "section_number": false,
+    "equation_number": true,
+    "equation_style": "arabic",
+    "enclosure": "parentheses",
+    "separator": null,
+    "apply_to_new_equation_numbers": true,
+    "apply_to_whole_document": true,
+    "update_equation_numbers_automatically": true,
+    "warn_when_inserting_first_equation_number": true,
+    "warn_when_inserting_equation_references": false,
+    "use_as_default_for_new_documents": true
+  },
+  "conversion": {
+    "inline_delimiter": "$",
+    "display_delimiter_open": "\\[",
+    "display_delimiter_close": "\\]"
+  },
+  "validation": {
+    "reject_unresolved_markers": true,
+    "reject_reference_placeholders": true,
+    "require_native_mathtype_ole": true,
+    "require_native_mathtype_number_fields": true,
+    "require_native_mathtype_reference_fields": true
+  }
+}

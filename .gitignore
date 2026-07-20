@@ -1,0 +1,34 @@
+# OS and editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/settings.json
+*.suo
+*.user
+
+# Python and local environments
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+
+# Local configuration and generated diagnostics
+.env
+.env.*
+!.env.example
+*.log
+graphify-out/
+mathtype-for-word-workspace/
+
+# Generated Word outputs are ignored except committed eval inputs.
+*.docx
+!evals/fixtures/*.docx
+
+# Keep release artifacts while ignoring unrelated distribution files.
+*.skill
+dist/*
+!dist/mathtype-for-word.skill
+!dist/mathtype-for-word.skill.sha256
+!dist/mathtype-for-word-plugin.zip
+!dist/mathtype-for-word-plugin.zip.sha256

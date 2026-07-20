@@ -1,0 +1,5 @@
+{
+  "executor_duration_seconds": 15.0,
+  "simulated": true,
+  "note": "No external DOCX execution occurred; duration is an executor estimate for prompt analysis and answer generation."
+}

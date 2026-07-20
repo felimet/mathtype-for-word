@@ -1,0 +1,79 @@
+{
+  "expectations": [
+    {
+      "text": "Distinguishes two numbered display equations from one unnumbered inline equation.",
+      "passed": true,
+      "evidence": "The table maps state and output to MathType display equations with (1)/(2), and noise to an unnumbered MathType inline equation."
+    },
+    {
+      "text": "Uses unique stable IDs and requires each marker exactly once.",
+      "passed": true,
+      "evidence": "The response uses state, output, and noise as stable IDs and explicitly requires each marker to occur exactly once."
+    },
+    {
+      "text": "Introduces each display in preceding prose and follows it with a Traditional Chinese 其中， paragraph defining symbols, indices, units, and meanings.",
+      "passed": true,
+      "evidence": "The response requires a lead sentence before every display and a separate ‘其中，’ paragraph defining all symbols, dimensions, subscripts/superscripts, index ranges, units, and physical meanings."
+    },
+    {
+      "text": "Requires three Equation.DSMT4 objects; sequential MTPlaceRef/SEQ MTEqn numbers (1) and (2); and two GOTOBUTTON/nested REF references backed by live ZEqnNum bookmarks.",
+      "passed": false,
+      "evidence": "The response only specifies three generic MathType formulas, right-side numbering, and Insert Equation Reference. It does not identify Equation.DSMT4, MTPlaceRef, SEQ MTEqn, GOTOBUTTON, nested REF, or ZEqnNum bookmarks, so the exact structural requirement is unverified."
+    },
+    {
+      "text": "Calls for visual inspection of complex typography in addition to structural validation.",
+      "passed": true,
+      "evidence": "The final paragraph separately requires structural checks and page-by-page visual checks for subscripts/superscripts, matrices, brackets, and inline baselines."
+    }
+  ],
+  "summary": {
+    "passed": 4,
+    "failed": 1,
+    "total": 5,
+    "pass_rate": 0.8
+  },
+  "execution_metrics": {
+    "tool_calls": {},
+    "total_tool_calls": 0,
+    "total_steps": 6,
+    "errors_encountered": 0,
+    "output_chars": 769,
+    "transcript_chars": 1286
+  },
+  "timing": {
+    "executor_duration_seconds": 24.0,
+    "grader_duration_seconds": 0.0,
+    "total_duration_seconds": 24.0,
+    "simulated": true,
+    "note": "No external DOCX execution occurred; duration is an executor estimate for prompt analysis and answer generation. Grading was batched, so a per-run grader duration is unavailable."
+  },
+  "claims": [
+    {
+      "claim": "No document was created because the actual DOCX and equation semantics were unavailable.",
+      "type": "process",
+      "verified": true,
+      "evidence": "The response explicitly refuses to fabricate the result, and metrics report zero tool calls."
+    },
+    {
+      "claim": "The proposed layout has two numbered displays and one unnumbered inline equation.",
+      "type": "factual",
+      "verified": true,
+      "evidence": "The answer's table provides exactly that mapping for state, output, and noise."
+    },
+    {
+      "claim": "The proposed references are MathType-native at the exact field/bookmark level.",
+      "type": "quality",
+      "verified": false,
+      "evidence": "The answer invokes MathType Insert Equation Reference and live behavior, but does not identify MTReference, MTPlaceRef, GOTOBUTTON/REF, or ZEqnNum and provides no output artifact."
+    }
+  ],
+  "user_notes_summary": {
+    "uncertainties": [],
+    "needs_review": [],
+    "workarounds": []
+  },
+  "eval_feedback": {
+    "suggestions": [],
+    "overall": "The updated native-structure assertion now distinguishes this generic MathType plan: the baseline lacks every required object-class, field-code, and bookmark identifier."
+  }
+}

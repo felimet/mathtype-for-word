@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "equations": [
+    {
+      "id": "mass_energy",
+      "marker": "{{MATH:mass_energy}}",
+      "tex": "E = mc^2",
+      "layout": "display",
+      "numbered": true
+    },
+    {
+      "id": "inline_variance",
+      "marker": "{{MATH:inline_variance}}",
+      "tex": "\\sigma^2",
+      "layout": "inline",
+      "numbered": false
+    },
+    {
+      "id": "quadratic",
+      "marker": "{{MATH:quadratic}}",
+      "tex": "x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}",
+      "layout": "display",
+      "numbered": true
+    }
+  ],
+  "references": [
+    {
+      "marker": "{{EQREF:mass_energy}}",
+      "target": "mass_energy"
+    },
+    {
+      "marker": "{{EQREF:quadratic}}",
+      "target": "quadratic"
+    }
+  ]
+}

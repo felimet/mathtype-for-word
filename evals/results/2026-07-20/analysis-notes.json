@@ -1,0 +1,12 @@
+[
+  "Benchmark 有 3 個 eval、2 種配置與 6 筆 run 記錄；每個 eval/configuration 只有 run_number 1，共形成 15 組對應 assertions、30 個 assertion verdict。",
+  "with_skill 在 Eval 1、2、3 均為 5/5，合計 15/15（100%）；without_skill 依序為 2/5（0.4）、4/5（0.8）、4/5（0.8），合計 10/15（66.7%）。聚合 pass-rate delta 為 +0.33。",
+  "15 組對應 assertions 中，10 組在兩種配置都通過，5 組由 with_skill 通過而 without_skill 失敗；沒有 with_skill 失敗的 assertion，也沒有兩種配置共同失敗的 assertion。",
+  "Eval 1 有 3 項區辨 assertion：一個 Equation.DSMT4 display 物件與簡單 (1) 編號；MTReference/MTPlaceRef 到 GOTOBUTTON/REF 與 ZEqnNum 的原生引用結構；以及 probe 加 manifest-aware validation。該題 with_skill 為 1.0，without_skill 為 0.4。",
+  "Eval 2 新增的區辨 assertion 要求三個 Equation.DSMT4 物件、MTPlaceRef/SEQ MTEqn 的 (1)/(2)，以及由 live ZEqnNum bookmarks 支援的 GOTOBUTTON/nested REF 引用。該 assertion 僅 with_skill 通過，使該題分數為 1.0 對 0.8。",
+  "Eval 3 新增的區辨 assertion 要求明確呼叫或要求 probe_mathtype_word，並在選擇 fallback 前回報精確的具名失敗檢查。該 assertion 僅 with_skill 通過，使該題分數為 1.0 對 0.8。",
+  "區辨 assertions 的分布為 Eval 1 三項、Eval 2 一項、Eval 3 一項；因此每個 eval 都至少有一項觀察到不同 verdict 的 assertion。",
+  "其餘 10 項非區辨 assertions 在兩種配置均通過，涵蓋不覆寫來源、排除靜默或非原生替代、公式角色與 marker 規劃、學術符號說明、視覺檢查，以及 fallback 揭露與授權行為。",
+  "6 個 runs 的 tool_calls 與 errors 均為 0；grading timing 均標記為 simulated。這批 verdict 的證據來自情境回應與操作方案，沒有實際 Word、MathType 或 DOCX 執行記錄。",
+  "with_skill 平均時間為 3.5333 秒，without_skill 為 20.0 秒，時間 delta 為 -16.5 秒；with_skill 平均輸出字元代理值為 909.6667，without_skill 為 608.6667，差值為 +301。每個 eval/configuration 只有一筆 run，因此沒有同題重複 run 的分布。"
+]

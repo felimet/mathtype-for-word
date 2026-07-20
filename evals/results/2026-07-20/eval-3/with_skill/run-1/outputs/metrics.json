@@ -1,0 +1,8 @@
+{
+  "tool_calls": 0,
+  "total_steps": 5,
+  "errors": 0,
+  "output_chars": 501,
+  "transcript_chars": 1043,
+  "scope": "情境執行；評測器讀取 skill 與 references 的共享檔案呼叫不計入。"
+}

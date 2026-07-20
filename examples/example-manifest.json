@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "equations": [
+    {
+      "id": "mass_energy",
+      "marker": "{{MATH:mass_energy}}",
+      "tex": "E = mc^2",
+      "layout": "display",
+      "numbered": true
+    },
+    {
+      "id": "inline_sigma",
+      "marker": "{{MATH:inline_sigma}}",
+      "tex": "\\sigma^2",
+      "layout": "inline",
+      "numbered": false
+    }
+  ],
+  "references": [
+    {
+      "marker": "{{EQREF:mass_energy}}",
+      "target": "mass_energy"
+    }
+  ]
+}

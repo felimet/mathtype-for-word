@@ -1,0 +1,1325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Eval Review</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600&family=Lora:wght@400;500&display=swap" rel="stylesheet">
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js" integrity="sha384-EnyY0/GSHQGSxSgMwaIPzSESbqoOLSexfnSMN2AP+39Ckmn92stwABZynq1JyzdT" crossorigin="anonymous"></script>
+  <style>
+    :root {
+      --bg: #faf9f5;
+      --surface: #ffffff;
+      --border: #e8e6dc;
+      --text: #141413;
+      --text-muted: #b0aea5;
+      --accent: #d97757;
+      --accent-hover: #c4613f;
+      --green: #788c5d;
+      --green-bg: #eef2e8;
+      --red: #c44;
+      --red-bg: #fceaea;
+      --header-bg: #141413;
+      --header-text: #faf9f5;
+      --radius: 6px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Lora', Georgia, serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ---- Header ---- */
+    .header {
+      background: var(--header-bg);
+      color: var(--header-text);
+      padding: 1rem 2rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-shrink: 0;
+    }
+    .header h1 {
+      font-family: 'Poppins', sans-serif;
+      font-size: 1.25rem;
+      font-weight: 600;
+    }
+    .header .instructions {
+      font-size: 0.8rem;
+      opacity: 0.7;
+      margin-top: 0.25rem;
+    }
+    .header .progress {
+      font-size: 0.875rem;
+      opacity: 0.8;
+      text-align: right;
+    }
+
+    /* ---- Main content ---- */
+    .main {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1.5rem 2rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+    }
+
+    /* ---- Sections ---- */
+    .section {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      flex-shrink: 0;
+    }
+    .section-header {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.75rem 1rem;
+      font-size: 0.75rem;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--border);
+      background: var(--bg);
+    }
+    .section-body {
+      padding: 1rem;
+    }
+
+    /* ---- Config badge ---- */
+    .config-badge {
+      display: inline-block;
+      padding: 0.2rem 0.625rem;
+      border-radius: 9999px;
+      font-family: 'Poppins', sans-serif;
+      font-size: 0.6875rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      margin-left: 0.75rem;
+      vertical-align: middle;
+    }
+    .config-badge.config-primary {
+      background: rgba(33, 150, 243, 0.12);
+      color: #1976d2;
+    }
+    .config-badge.config-baseline {
+      background: rgba(255, 193, 7, 0.15);
+      color: #f57f17;
+    }
+
+    /* ---- Prompt ---- */
+    .prompt-text {
+      white-space: pre-wrap;
+      font-size: 0.9375rem;
+      line-height: 1.6;
+    }
+
+    /* ---- Outputs ---- */
+    .output-file {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .output-file + .output-file {
+      margin-top: 1rem;
+    }
+    .output-file-header {
+      padding: 0.5rem 0.75rem;
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      font-family: 'SF Mono', SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .output-file-header .dl-btn {
+      font-size: 0.7rem;
+      color: var(--accent);
+      text-decoration: none;
+      cursor: pointer;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-weight: 500;
+      opacity: 0.8;
+    }
+    .output-file-header .dl-btn:hover {
+      opacity: 1;
+      text-decoration: underline;
+    }
+    .output-file-content {
+      padding: 0.75rem;
+      overflow-x: auto;
+    }
+    .output-file-content pre {
+      font-size: 0.8125rem;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: 'SF Mono', SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+    }
+    .output-file-content img {
+      max-width: 100%;
+      height: auto;
+      border-radius: 4px;
+    }
+    .output-file-content iframe {
+      width: 100%;
+      height: 600px;
+      border: none;
+    }
+    .output-file-content table {
+      border-collapse: collapse;
+      font-size: 0.8125rem;
+      width: 100%;
+    }
+    .output-file-content table td,
+    .output-file-content table th {
+      border: 1px solid var(--border);
+      padding: 0.375rem 0.5rem;
+      text-align: left;
+    }
+    .output-file-content table th {
+      background: var(--bg);
+      font-weight: 600;
+    }
+    .output-file-content .download-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.5rem 1rem;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--accent);
+      text-decoration: none;
+      font-size: 0.875rem;
+      cursor: pointer;
+    }
+    .output-file-content .download-link:hover {
+      background: var(--border);
+    }
+    .empty-state {
+      color: var(--text-muted);
+      font-style: italic;
+      padding: 2rem;
+      text-align: center;
+    }
+
+    /* ---- Feedback ---- */
+    .prev-feedback {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 0.625rem 0.75rem;
+      margin-top: 0.75rem;
+      font-size: 0.8125rem;
+      color: var(--text-muted);
+      line-height: 1.5;
+    }
+    .prev-feedback-label {
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 0.25rem;
+      color: var(--text-muted);
+    }
+    .feedback-textarea {
+      width: 100%;
+      min-height: 100px;
+      padding: 0.75rem;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font-family: inherit;
+      font-size: 0.9375rem;
+      line-height: 1.5;
+      resize: vertical;
+      color: var(--text);
+    }
+    .feedback-textarea:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+    }
+    .feedback-status {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-top: 0.5rem;
+      min-height: 1.1em;
+    }
+
+    /* ---- Grades (collapsible) ---- */
+    .grades-toggle {
+      display: flex;
+      align-items: center;
+      cursor: pointer;
+      user-select: none;
+    }
+    .grades-toggle:hover {
+      color: var(--accent);
+    }
+    .grades-toggle .arrow {
+      margin-right: 0.5rem;
+      transition: transform 0.15s;
+      font-size: 0.75rem;
+    }
+    .grades-toggle .arrow.open {
+      transform: rotate(90deg);
+    }
+    .grades-content {
+      display: none;
+      margin-top: 0.75rem;
+    }
+    .grades-content.open {
+      display: block;
+    }
+    .grades-summary {
+      font-size: 0.875rem;
+      margin-bottom: 0.75rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .grade-badge {
+      display: inline-block;
+      padding: 0.125rem 0.5rem;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+    .grade-pass { background: var(--green-bg); color: var(--green); }
+    .grade-fail { background: var(--red-bg); color: var(--red); }
+    .assertion-list {
+      list-style: none;
+    }
+    .assertion-item {
+      padding: 0.625rem 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.8125rem;
+    }
+    .assertion-item:last-child { border-bottom: none; }
+    .assertion-status {
+      font-weight: 600;
+      margin-right: 0.5rem;
+    }
+    .assertion-status.pass { color: var(--green); }
+    .assertion-status.fail { color: var(--red); }
+    .assertion-evidence {
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      margin-top: 0.25rem;
+      padding-left: 1.5rem;
+    }
+
+    /* ---- View tabs ---- */
+    .view-tabs {
+      display: flex;
+      gap: 0;
+      padding: 0 2rem;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .view-tab {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.625rem 1.25rem;
+      font-size: 0.8125rem;
+      font-weight: 500;
+      cursor: pointer;
+      border: none;
+      background: none;
+      color: var(--text-muted);
+      border-bottom: 2px solid transparent;
+      transition: all 0.15s;
+    }
+    .view-tab:hover { color: var(--text); }
+    .view-tab.active {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+    }
+    .view-panel { display: none; }
+    .view-panel.active { display: flex; flex-direction: column; flex: 1; overflow: hidden; }
+
+    /* ---- Benchmark view ---- */
+    .benchmark-view {
+      padding: 1.5rem 2rem;
+      overflow-y: auto;
+      flex: 1;
+    }
+    .benchmark-table {
+      border-collapse: collapse;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      font-size: 0.8125rem;
+      width: 100%;
+      margin-bottom: 1.5rem;
+    }
+    .benchmark-table th, .benchmark-table td {
+      padding: 0.625rem 0.75rem;
+      text-align: left;
+      border: 1px solid var(--border);
+    }
+    .benchmark-table th {
+      font-family: 'Poppins', sans-serif;
+      background: var(--header-bg);
+      color: var(--header-text);
+      font-weight: 500;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .benchmark-table tr:hover { background: var(--bg); }
+    .benchmark-table tr.benchmark-row-with { background: rgba(33, 150, 243, 0.06); }
+    .benchmark-table tr.benchmark-row-without { background: rgba(255, 193, 7, 0.06); }
+    .benchmark-table tr.benchmark-row-with:hover { background: rgba(33, 150, 243, 0.12); }
+    .benchmark-table tr.benchmark-row-without:hover { background: rgba(255, 193, 7, 0.12); }
+    .benchmark-table tr.benchmark-row-avg { font-weight: 600; border-top: 2px solid var(--border); }
+    .benchmark-table tr.benchmark-row-avg.benchmark-row-with { background: rgba(33, 150, 243, 0.12); }
+    .benchmark-table tr.benchmark-row-avg.benchmark-row-without { background: rgba(255, 193, 7, 0.12); }
+    .benchmark-delta-positive { color: var(--green); font-weight: 600; }
+    .benchmark-delta-negative { color: var(--red); font-weight: 600; }
+    .benchmark-notes {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1rem;
+    }
+    .benchmark-notes h3 {
+      font-family: 'Poppins', sans-serif;
+      font-size: 0.875rem;
+      margin-bottom: 0.75rem;
+    }
+    .benchmark-notes ul {
+      list-style: disc;
+      padding-left: 1.25rem;
+    }
+    .benchmark-notes li {
+      font-size: 0.8125rem;
+      line-height: 1.6;
+      margin-bottom: 0.375rem;
+    }
+    .benchmark-empty {
+      color: var(--text-muted);
+      font-style: italic;
+      text-align: center;
+      padding: 3rem;
+    }
+
+    /* ---- Navigation ---- */
+    .nav {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 1rem 2rem;
+      border-top: 1px solid var(--border);
+      background: var(--surface);
+      flex-shrink: 0;
+    }
+    .nav-btn {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.5rem 1.25rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      cursor: pointer;
+      font-size: 0.875rem;
+      font-weight: 500;
+      color: var(--text);
+      transition: all 0.15s;
+    }
+    .nav-btn:hover:not(:disabled) {
+      background: var(--bg);
+      border-color: var(--text-muted);
+    }
+    .nav-btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    .done-btn {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.5rem 1.5rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      color: var(--text);
+      cursor: pointer;
+      font-size: 0.875rem;
+      font-weight: 500;
+      transition: all 0.15s;
+    }
+    .done-btn:hover {
+      background: var(--bg);
+      border-color: var(--text-muted);
+    }
+    .done-btn.ready {
+      border: none;
+      background: var(--accent);
+      color: white;
+      font-weight: 600;
+    }
+    .done-btn.ready:hover {
+      background: var(--accent-hover);
+    }
+    /* ---- Done overlay ---- */
+    .done-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.5);
+      z-index: 100;
+      justify-content: center;
+      align-items: center;
+    }
+    .done-overlay.visible {
+      display: flex;
+    }
+    .done-card {
+      background: var(--surface);
+      border-radius: 12px;
+      padding: 2rem 3rem;
+      text-align: center;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      max-width: 500px;
+    }
+    .done-card h2 {
+      font-size: 1.5rem;
+      margin-bottom: 0.5rem;
+    }
+    .done-card p {
+      color: var(--text-muted);
+      margin-bottom: 1.5rem;
+      line-height: 1.5;
+    }
+    .done-card .btn-row {
+      display: flex;
+      gap: 0.5rem;
+      justify-content: center;
+    }
+    .done-card button {
+      padding: 0.5rem 1.25rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      cursor: pointer;
+      font-size: 0.875rem;
+    }
+    .done-card button:hover {
+      background: var(--bg);
+    }
+    /* ---- Toast ---- */
+    .toast {
+      position: fixed;
+      bottom: 5rem;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--header-bg);
+      color: var(--header-text);
+      padding: 0.625rem 1.25rem;
+      border-radius: var(--radius);
+      font-size: 0.875rem;
+      opacity: 0;
+      transition: opacity 0.3s;
+      pointer-events: none;
+      z-index: 200;
+    }
+    .toast.visible {
+      opacity: 1;
+    }
+  </style>
+</head>
+<body>
+  <div id="app" style="height:100vh; display:flex; flex-direction:column;">
+    <div class="header">
+      <div>
+        <h1>Eval Review: <span id="skill-name"></span></h1>
+        <div class="instructions">Review each output and leave feedback below. Navigate with arrow keys or buttons. When done, copy feedback and paste into Claude Code.</div>
+      </div>
+      <div class="progress" id="progress"></div>
+    </div>
+
+    <!-- View tabs (only shown when benchmark data exists) -->
+    <div class="view-tabs" id="view-tabs" style="display:none;">
+      <button class="view-tab active" onclick="switchView('outputs')">Outputs</button>
+      <button class="view-tab" onclick="switchView('benchmark')">Benchmark</button>
+    </div>
+
+    <!-- Outputs panel (qualitative review) -->
+    <div class="view-panel active" id="panel-outputs">
+    <div class="main">
+      <!-- Prompt -->
+      <div class="section">
+        <div class="section-header">Prompt <span class="config-badge" id="config-badge" style="display:none;"></span></div>
+        <div class="section-body">
+          <div class="prompt-text" id="prompt-text"></div>
+        </div>
+      </div>
+
+      <!-- Outputs -->
+      <div class="section">
+        <div class="section-header">Output</div>
+        <div class="section-body" id="outputs-body">
+          <div class="empty-state">No output files found</div>
+        </div>
+      </div>
+
+      <!-- Previous Output (collapsible) -->
+      <div class="section" id="prev-outputs-section" style="display:none;">
+        <div class="section-header">
+          <div class="grades-toggle" onclick="togglePrevOutputs()">
+            <span class="arrow" id="prev-outputs-arrow">&#9654;</span>
+            Previous Output
+          </div>
+        </div>
+        <div class="grades-content" id="prev-outputs-content"></div>
+      </div>
+
+      <!-- Grades (collapsible) -->
+      <div class="section" id="grades-section" style="display:none;">
+        <div class="section-header">
+          <div class="grades-toggle" onclick="toggleGrades()">
+            <span class="arrow" id="grades-arrow">&#9654;</span>
+            Formal Grades
+          </div>
+        </div>
+        <div class="grades-content" id="grades-content"></div>
+      </div>
+
+      <!-- Feedback -->
+      <div class="section">
+        <div class="section-header">Your Feedback</div>
+        <div class="section-body">
+          <textarea
+            class="feedback-textarea"
+            id="feedback"
+            placeholder="What do you think of this output? Any issues, suggestions, or things that look great?"
+          ></textarea>
+          <div class="feedback-status" id="feedback-status"></div>
+          <div class="prev-feedback" id="prev-feedback" style="display:none;">
+            <div class="prev-feedback-label">Previous feedback</div>
+            <div id="prev-feedback-text"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="nav" id="outputs-nav">
+      <button class="nav-btn" id="prev-btn" onclick="navigate(-1)">&#8592; Previous</button>
+      <button class="done-btn" id="done-btn" onclick="showDoneDialog()">Submit All Reviews</button>
+      <button class="nav-btn" id="next-btn" onclick="navigate(1)">Next &#8594;</button>
+    </div>
+    </div><!-- end panel-outputs -->
+
+    <!-- Benchmark panel (quantitative stats) -->
+    <div class="view-panel" id="panel-benchmark">
+      <div class="benchmark-view" id="benchmark-content">
+        <div class="benchmark-empty">No benchmark data available. Run a benchmark to see quantitative results here.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Done overlay -->
+  <div class="done-overlay" id="done-overlay">
+    <div class="done-card">
+      <h2>Review Complete</h2>
+      <p>Your feedback has been saved. Go back to your Claude Code session and tell Claude you're done reviewing.</p>
+      <div class="btn-row">
+        <button onclick="closeDoneDialog()">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div class="toast" id="toast"></div>
+
+  <script>
+    // ---- Embedded data (injected by generate_review.py) ----
+    const EMBEDDED_DATA = {"skill_name": "mathtype-for-word", "runs": [{"id": "eval-1-with_skill-run-1", "prompt": "(No prompt found)", "eval_id": null, "outputs": [{"name": "answer.md", "type": "text", "content": "\u76ee\u524d\u672a\u5efa\u7acb `C:\\work\\paper-final.docx`\uff0c\u56e0\u70ba\u6b64\u8a55\u6e2c\u60c5\u5883\u6c92\u6709\u5be6\u969b\u63d0\u4f9b `C:\\work\\paper-draft.docx`\u3002\u6211\u4e0d\u6703\u507d\u7a31\u5df2\u5b8c\u6210\uff1b\u5be6\u969b\u53d6\u5f97\u4f86\u6e90\u6a94\u5f8c\u6703\u4f9d\u4e0b\u5217\u6d41\u7a0b\u57f7\u884c\uff1a\n\n1. \u4fdd\u7559\u4f86\u6e90\u6a94\uff0c\u5148\u547c\u53eb `probe_mathtype_word`\u3002\u82e5 Word COM\u3001MathType \u7a0b\u5f0f\u3001Word add-in \u6216 `Equation.DSMT4` \u8a3b\u518a\u4efb\u4e00\u6aa2\u67e5\u5931\u6557\uff0c\u5c31\u505c\u6b62\u4e26\u56de\u5831\u8a72\u9805\u7cbe\u78ba\u7d50\u679c\u3002\n2. \u5efa\u7acb schema v1 manifest\uff1a\n\n```json\n{\n  \"schema_version\": 1,\n  \"equations\": [\n    {\n      \"id\": \"energy\",\n      \"marker\": \"{{MATH:energy}}\",\n      \"tex\": \"E = mc^2\",\n      \"layout\": \"display\",\n      \"numbered\": true\n    }\n  ],\n  \"references\": [\n    {\n      \"marker\": \"{{EQREF:energy}}\",\n      \"target\": \"energy\"\n    }\n  ]\n}\n```\n\n3. \u78ba\u8a8d\u5169\u500b marker \u5728\u4f86\u6e90 DOCX \u5404\u51fa\u73fe\u4e00\u6b21\uff0c\u518d\u4ee5 `render_mathtype_word_document` \u5beb\u5165\u65b0\u6a94 `C:\\work\\paper-final.docx`\u3002\n4. \u516c\u5f0f\u5fc5\u9808\u662f `Equation.DSMT4` \u7368\u7acb\u516c\u5f0f\uff1b\u7de8\u865f\u5fc5\u9808\u7531 MathType \u7684 `MACROBUTTON MTPlaceRef` \u8207 `SEQ MTEqn` \u7522\u751f `(1)`\uff0c\u4e0d\u542b\u76ee\u524d\u7ae0\u7bc0\u6b04\u4f4d\u3002\n5. \u5f15\u7528\u5fc5\u9808\u7d93 `MTCommand_InsertEqnRef` \u7684 `MTReference` placeholder \u53ca\u76ee\u6a19 `MTPlaceRef` \u5b8c\u6210\uff0c\u7d50\u679c\u61c9\u662f\u542b\u5de2\u72c0 `REF` \u7684 `GOTOBUTTON`\uff0c\u4e26\u6307\u5411\u6709\u6548\u7684 `ZEqnNum...` bookmark\u3002\n6. \u4f7f\u7528\u540c\u4e00 manifest \u547c\u53eb `validate_mathtype_word_document`\u3002\u53ea\u6709\u5728\u78ba\u8a8d\u4e00\u500b `Equation.DSMT4`\u3001\u4e00\u500b native number\u3001\u4e00\u500b live native reference\u3001\u7121 OMath\u3001\u7121\u6b98\u7559 marker \u6216 placeholder\uff0c\u4e14\u56de\u50b3 `ok: true` \u5f8c\uff0c\u624d\u6703\u56de\u5831\u5b8c\u6210\u3002\n\nWord \u7de8\u865f\u6e05\u55ae\u3001Caption\u3001\u624b\u6253 `(1)`\u3001OMath \u8207\u5716\u7247\u90fd\u4e0d\u6703\u4f5c\u70ba\u6b64\u5de5\u4f5c\u7684\u4e3b\u8981\u5be6\u4f5c\u3002\n"}], "grading": {"expectations": [{"text": "Does not use Word numbered lists, captions, OMath, typed numbers, or images as the primary implementation.", "passed": true, "evidence": "The answer explicitly says: \u2018Word \u7de8\u865f\u6e05\u55ae\u3001Caption\u3001\u624b\u6253 (1)\u3001OMath \u8207\u5716\u7247\u90fd\u4e0d\u6703\u4f5c\u70ba\u6b64\u5de5\u4f5c\u7684\u4e3b\u8981\u5be6\u4f5c\u3002\u2019"}, {"text": "Uses a new output path and does not overwrite the input.", "passed": true, "evidence": "The transcript requires preserving the source and the answer states that rendering writes to the distinct path C:\\work\\paper-final.docx. It also explicitly says that file was not created in the simulation."}, {"text": "Creates or specifies one display Equation.DSMT4 object with simple (1) numbering and no current chapter/section component.", "passed": true, "evidence": "The manifest contains exactly one equation, energy, with layout display and numbered true. Step 4 specifies Equation.DSMT4 and a native (1) generated by MTPlaceRef/SEQ MTEqn without a current chapter field."}, {"text": "Creates or specifies a MathType-native reference through MTReference and MTPlaceRef, resulting in GOTOBUTTON/REF and a ZEqnNum bookmark.", "passed": true, "evidence": "Step 5 requires the MTCommand_InsertEqnRef MTReference placeholder and target MTPlaceRef workflow, with a resulting GOTOBUTTON containing nested REF and a valid ZEqnNum bookmark."}, {"text": "Runs or explicitly requires both probe and manifest-aware validation before claiming completion.", "passed": true, "evidence": "Step 1 requires probe_mathtype_word. Step 6 requires validate_mathtype_word_document using the same manifest and permits a completion claim only after ok: true and structural checks."}], "summary": {"passed": 5, "failed": 0, "total": 5, "pass_rate": 1.0}, "execution_metrics": {"tool_calls": {}, "total_tool_calls": 0, "total_steps": 7, "errors_encountered": 0, "output_chars": 1118, "transcript_chars": 2084, "scope": "\u60c5\u5883\u57f7\u884c\uff1b\u8a55\u6e2c\u5668\u8b80\u53d6 skill \u8207 references \u7684\u5171\u4eab\u6a94\u6848\u547c\u53eb\u4e0d\u8a08\u5165\u3002"}, "timing": {"executor_duration_seconds": 4.2, "grader_duration_seconds": 0.0, "total_duration_seconds": 4.2, "simulated": true, "note": "\u60c5\u5883\u8a55\u6e2c\u4f30\u8a08\u6642\u9593\uff1b\u672a\u555f\u52d5 Word\u3001MathType \u6216\u5916\u90e8\u5beb\u5165\u3002Grading was batched, so a per-run grader duration is unavailable."}, "claims": [{"claim": "C:\\work\\paper-final.docx was not created in this simulated run.", "type": "process", "verified": true, "evidence": "The transcript and answer explicitly disclaim creation, and metrics report zero tool calls."}, {"claim": "The proposed manifest maps one display numbered equation and one reference to the stable ID energy.", "type": "factual", "verified": true, "evidence": "The shown schema v1 JSON contains one equations entry with id energy and one references entry targeting energy."}, {"claim": "The proposed reference structure is MathType-native rather than a Word caption or list.", "type": "quality", "verified": true, "evidence": "The answer names MTReference, MTPlaceRef, GOTOBUTTON, nested REF, and ZEqnNum and explicitly excludes Caption and numbered lists. This verifies the plan, not an executed DOCX."}], "user_notes_summary": {"uncertainties": [], "needs_review": [], "workarounds": []}, "eval_feedback": {"suggestions": [], "overall": "The assertions are specific and discriminating for a simulated plan. An executed integration eval would still be needed to verify the resulting DOCX fields and bookmarks."}}}, {"id": "eval-1-without_skill-run-1", "prompt": "(No prompt found)", "eval_id": null, "outputs": [{"name": "answer.md", "type": "text", "content": "\u76ee\u524d\u7121\u6cd5\u8072\u7a31\u5df2\u5b8c\u6210\u8f49\u63db\uff0c\u56e0\u70ba\u8a55\u6e2c\u74b0\u5883\u4e2d\u6c92\u6709 `C:\\work\\paper-draft.docx`\u3002\u82e5\u6a94\u6848\u53ef\u7528\uff0c\u6211\u6703\u4f9d\u4e0b\u5217\u65b9\u5f0f\u57f7\u884c\uff1a\n\n1. \u5148\u78ba\u8a8d Microsoft Word \u53ef\u555f\u52d5\u3001MathType \u5df2\u5b89\u88dd\uff0c\u4e14 Word \u7684 MathType \u7d22\u5f15\u6a19\u7c64\u8207\u63d2\u5165\u516c\u5f0f\u3001\u63d2\u5165\u7de8\u865f\u3001\u63d2\u5165\u5f15\u7528\u547d\u4ee4\u53ef\u7528\u3002\u63a2\u6e2c\u5931\u6557\u5c31\u505c\u6b62\uff0c\u4e0d\u7522\u751f\u5192\u5145 MathType \u7684\u7d50\u679c\u3002\n2. \u958b\u555f\u4f86\u6e90\u5f8c\u7acb\u5373\u53e6\u5b58\u70ba `C:\\work\\paper-final.docx`\uff0c\u5f8c\u7e8c\u53ea\u4fee\u6539\u526f\u672c\u3002\n3. \u78ba\u8a8d `{{MATH:energy}}` \u8207 `{{EQREF:energy}}` \u5404\u51fa\u73fe\u4e00\u6b21\u3002\u628a\u524d\u8005\u66ff\u63db\u70ba MathType \u5efa\u7acb\u7684\u7368\u7acb\u516c\u5f0f `E = mc^2`\u3002\n4. \u5728 MathType \u7684 Format Equation Numbers \u4e2d\u9078\u7528\u7c21\u55ae\u683c\u5f0f\uff0c\u53ea\u4fdd\u7559 Equation Number\uff0c\u95dc\u9589 Chapter Number \u8207 Section Number\uff0c\u5916\u6846\u4f7f\u7528\u5713\u62ec\u865f\uff0c\u4f7f\u7b2c\u4e00\u500b\u7de8\u865f\u986f\u793a\u70ba `(1)`\u3002\u7de8\u865f\u4f7f\u7528 MathType \u7684\u63d2\u5165\u7de8\u865f\u529f\u80fd\uff0c\u4e0d\u4f7f\u7528 Word \u7de8\u865f\u6e05\u55ae\u3001Caption \u6216\u624b\u52d5\u8f38\u5165\u6587\u5b57\u3002\n5. \u5728\u5f15\u7528\u6a19\u8a18\u4f4d\u7f6e\u4f7f\u7528 MathType \u7684 Insert Equation Reference\uff0c\u9078\u53d6\u525b\u5efa\u7acb\u7684 `(1)`\uff0c\u4fdd\u7559 Word \u6b04\u4f4d\u8207\u66f8\u7c64\u6240\u63d0\u4f9b\u7684\u66f4\u65b0\u53ca\u8df3\u8f49\u884c\u70ba\u3002\n6. \u66f4\u65b0\u6574\u4efd\u6587\u4ef6\u7684\u6b04\u4f4d\uff0c\u5132\u5b58\u3001\u95dc\u9589\u4e26\u91cd\u65b0\u958b\u555f\u8f38\u51fa\u6a94\u3002\u6aa2\u67e5\u516c\u5f0f\u78ba\u70ba MathType \u7269\u4ef6\u3001\u7de8\u865f\u70ba `(1)`\u3001\u5f15\u7528\u986f\u793a `(1)` \u4e14\u53ef\u8df3\u56de\u516c\u5f0f\uff0c\u4e26\u78ba\u8a8d\u6587\u4ef6\u4e2d\u6c92\u6709\u6b98\u7559\u6a19\u8a18\u3001Word \u5167\u5efa\u516c\u5f0f\u3001Caption \u6216\u7de8\u865f\u6e05\u55ae\u3002\n\n\u5728\u4e0a\u8ff0\u63a2\u6e2c\u3001\u8f49\u63db\u8207\u91cd\u65b0\u958b\u555f\u9a57\u8b49\u5be6\u969b\u6210\u529f\u524d\uff0c\u6211\u4e0d\u6703\u56de\u5831 `paper-final.docx` \u5df2\u5efa\u7acb\u3002\n"}], "grading": {"expectations": [{"text": "Does not use Word numbered lists, captions, OMath, typed numbers, or images as the primary implementation.", "passed": true, "evidence": "The response says it would use MathType numbering and explicitly excludes Word numbered lists, Caption, manual numbers, images, and Word built-in equations."}, {"text": "Uses a new output path and does not overwrite the input.", "passed": true, "evidence": "Step 2 says to immediately save as C:\\work\\paper-final.docx and modify only the copy; the response does not claim that a file was actually created."}, {"text": "Creates or specifies one display Equation.DSMT4 object with simple (1) numbering and no current chapter/section component.", "passed": false, "evidence": "The response specifies a MathType display equation and simple (1) formatting, but never identifies or verifies the required Equation.DSMT4 object class. \u2018MathType \u7269\u4ef6\u2019 is insufficient evidence for this exact structural requirement."}, {"text": "Creates or specifies a MathType-native reference through MTReference and MTPlaceRef, resulting in GOTOBUTTON/REF and a ZEqnNum bookmark.", "passed": false, "evidence": "The response mentions Insert Equation Reference and generic Word fields/bookmarks, but does not specify MTReference, MTPlaceRef, GOTOBUTTON, nested REF, or a ZEqnNum bookmark."}, {"text": "Runs or explicitly requires both probe and manifest-aware validation before claiming completion.", "passed": false, "evidence": "A prerequisite probe and reopen checks are proposed, but no manifest is created and the validation is not manifest-aware."}], "summary": {"passed": 2, "failed": 3, "total": 5, "pass_rate": 0.4}, "execution_metrics": {"tool_calls": {}, "total_tool_calls": 0, "total_steps": 6, "errors_encountered": 0, "output_chars": 746, "transcript_chars": 1250}, "timing": {"executor_duration_seconds": 21.0, "grader_duration_seconds": 0.0, "total_duration_seconds": 21.0, "simulated": true, "note": "No external DOCX execution occurred; duration is an executor estimate for prompt analysis and answer generation. Grading was batched, so a per-run grader duration is unavailable."}, "claims": [{"claim": "No output file was created because the input DOCX was unavailable.", "type": "process", "verified": true, "evidence": "The response explicitly says it cannot claim completion, and metrics report zero tool calls."}, {"claim": "The planned equation number would display as (1) without chapter or section components.", "type": "quality", "verified": true, "evidence": "Step 4 explicitly selects simple equation-only numbering with parentheses and disables chapter and section numbers. This verifies the plan only."}, {"claim": "The planned reference would have the exact native GOTOBUTTON/REF/ZEqnNum structure.", "type": "quality", "verified": false, "evidence": "The response only names Insert Equation Reference and generic fields/bookmarks; the exact native field and bookmark structure is neither specified nor observable in an output artifact."}], "user_notes_summary": {"uncertainties": [], "needs_review": [], "workarounds": []}, "eval_feedback": {"suggestions": [], "overall": "The eval meaningfully distinguishes generic MathType guidance from the skill's required object class, native field structure, and manifest-aware validation."}}}, {"id": "eval-2-with_skill-run-1", "prompt": "(No prompt found)", "eval_id": null, "outputs": [{"name": "answer.md", "type": "text", "content": "\u76ee\u524d\u4e0d\u80fd\u5ba3\u7a31\u5df2\u5b8c\u6210\u9019\u4efd Word \u8ad6\u6587\u3002\u984c\u76ee\u6c92\u6709\u63d0\u4f9b\u5be6\u969b DOCX\u3001\u8f38\u51fa\u8def\u5f91\u3001\u4e09\u500b\u516c\u5f0f\u7684\u6578\u5b78\u5167\u5bb9\uff0c\u4ee5\u53ca\u5404\u7b26\u865f\u7684\u9818\u57df\u610f\u7fa9\u8207\u55ae\u4f4d\uff1b\u6211\u4e0d\u6703\u81c6\u9020\u7814\u7a76\u5167\u5bb9\u6216\u5047\u7a31\u5df2\u5beb\u5165\u6587\u4ef6\u3002\n\n\u53d6\u5f97\u9019\u4e9b\u8cc7\u6599\u5f8c\uff0c\u6211\u6703\u4fdd\u7559\u4f86\u6e90\u6a94\u4e26\u63a1\u53d6\u4ee5\u4e0b\u5177\u9ad4\u6b65\u9a5f\uff1a\n\n1. \u547c\u53eb `probe_mathtype_word`\uff0c\u4efb\u4f55\u5fc5\u8981\u689d\u4ef6\u5931\u6557\u5c31\u505c\u6b62\u4e26\u56de\u5831\u7cbe\u78ba\u6aa2\u67e5\u9805\u76ee\u3002\n2. \u78ba\u8a8d\u4e94\u500b marker \u5404\u51fa\u73fe\u4e00\u6b21\uff0c\u4e26\u4ee5\u7a69\u5b9a ID \u898f\u5283\uff1a\n   - `state`\uff1a`display`\u3001`numbered: true`\uff0cnative number \u70ba `(1)`\u3002\n   - `output`\uff1a`display`\u3001`numbered: true`\uff0cnative number \u70ba `(2)`\u3002\n   - `noise`\uff1a`inline`\u3001`numbered: false`\u3002\n   - `{{EQREF:state}}` \u6307\u5411 `state`\uff1b`{{EQREF:output}}` \u6307\u5411 `output`\u3002\n3. \u5c07\u4f7f\u7528\u8005\u78ba\u8a8d\u7684\u4e09\u500b\u516c\u5f0f\u8f49\u6210\u4e00\u884c\u3001MathType \u76f8\u5bb9\u4e14\u4e0d\u542b `\\label`\u3001`\\ref`\u3001\u524d\u7f6e\u78bc\u6216\u81ea\u8a02\u5de8\u96c6\u7684 TeX\uff0c\u518d\u5efa\u7acb schema v1 manifest\u3002\u7531\u65bc\u516c\u5f0f\u5167\u5bb9\u76ee\u524d\u7f3a\u5931\uff0c\u6211\u4e0d\u6703\u63d0\u4ea4\u542b\u731c\u6e2c TeX \u7684 manifest\u3002\n4. \u6bcf\u500b display \u516c\u5f0f\u90fd\u7f6e\u65bc\u7368\u7acb\u6bb5\u843d\uff0c\u524d\u4e00\u6bb5\u52a0\u5165\u5f15\u5c0e\u53e5\uff1b\u5f8c\u4e00\u6bb5\u4ee5\u300c\u5176\u4e2d\uff0c\u300d\u8d77\u9996\uff0c\u9010\u4e00\u5b9a\u7fa9\u7b26\u865f\u3001\u5411\u91cf\u6216\u77e9\u9663\u3001\u7d22\u5f15\u3001\u4e0a\u4e0b\u6a19\u3001\u904b\u7b97\u5b50\u3001\u55ae\u4f4d\u3001\u91cf\u7db1\u53ca\u7269\u7406\u6216\u7d71\u8a08\u610f\u7fa9\u3002inline \u7684 `noise` \u7559\u5728\u5b8c\u6574\u8a9e\u53e5\u5167\u4e26\u4fdd\u7559\u6a19\u9ede\u3002\n5. \u547c\u53eb `render_mathtype_word_document`\u3002\u5169\u500b\u7de8\u865f\u5fc5\u9808\u662f `MTPlaceRef` \u8207 `SEQ MTEqn` \u7522\u751f\u7684 `(1)`\u3001`(2)`\uff1b\u5169\u500b\u5f15\u7528\u5fc5\u9808\u89e3\u6790\u70ba\u6307\u5411\u6709\u6548 `ZEqnNum...` bookmark \u7684 `GOTOBUTTON` \u8207\u5de2\u72c0 `REF`\u3002\n6. \u4f7f\u7528\u540c\u4e00 manifest \u547c\u53eb `validate_mathtype_word_document`\uff0c\u8981\u6c42\u4e09\u500b `Equation.DSMT4`\u3001\u5169\u500b native numbers\u3001\u5169\u500b live references\u3001\u9806\u5e8f\u5f9e 1 \u958b\u59cb\u3001\u7121 OMath\u3001\u7121\u6b98\u7559 marker \u6216 placeholder\uff0c\u4e14 `ok: true`\u3002\n7. \u518d\u8996\u89ba\u6aa2\u67e5\u5206\u6578\u3001\u77e9\u9663\u3001\u4e0a\u4e0b\u6a19\u3001\u7b26\u865f\u7bc4\u570d\u3001\u7de8\u865f\u5c0d\u9f4a\u8207\u516c\u5f0f\u662f\u5426\u6ea2\u51fa\u7248\u5fc3\u3002\u7d50\u69cb\u9a57\u8b49\u4e0d\u80fd\u53d6\u4ee3\u6b64\u6b65\u9a5f\u3002\n\n\u8acb\u63d0\u4f9b\u4f86\u6e90\u8207\u8f38\u51fa DOCX \u8def\u5f91\u3001`state`\u3001`output`\u3001`noise` \u7684\u6b63\u78ba\u516c\u5f0f\uff0c\u4ee5\u53ca\u6bcf\u500b\u7b26\u865f\u7684\u540d\u7a31\u3001\u610f\u7fa9\u8207\u55ae\u4f4d\uff1b\u6536\u5230\u5f8c\u624d\u80fd\u5b89\u5168\u5b8c\u6210\u3002\n"}], "grading": {"expectations": [{"text": "Distinguishes two numbered display equations from one unnumbered inline equation.", "passed": true, "evidence": "The answer maps state and output to display/numbered true and noise to inline/numbered false."}, {"text": "Uses unique stable IDs and requires each marker exactly once.", "passed": true, "evidence": "The response uses the stable IDs state, output, and noise, maps both reference targets, and requires all five markers to occur exactly once."}, {"text": "Introduces each display in preceding prose and follows it with a Traditional Chinese \u5176\u4e2d\uff0c paragraph defining symbols, indices, units, and meanings.", "passed": true, "evidence": "Step 4 requires each display to be its own paragraph, a preceding lead sentence, and a following paragraph starting \u2018\u5176\u4e2d\uff0c\u2019 that defines symbols, indices, subscripts/superscripts, units, dimensions, and physical or statistical meanings."}, {"text": "Requires three Equation.DSMT4 objects; sequential MTPlaceRef/SEQ MTEqn numbers (1) and (2); and two GOTOBUTTON/nested REF references backed by live ZEqnNum bookmarks.", "passed": true, "evidence": "Step 6 explicitly requires three Equation.DSMT4 objects. Step 5 requires (1)/(2) via MTPlaceRef and SEQ MTEqn and two GOTOBUTTON references containing nested REF fields that point to valid ZEqnNum bookmarks."}, {"text": "Calls for visual inspection of complex typography in addition to structural validation.", "passed": true, "evidence": "Step 6 requires manifest-aware structural validation and Step 7 separately requires visual inspection of fractions, matrices, subscripts/superscripts, symbol ranges, alignment, and overflow."}], "summary": {"passed": 5, "failed": 0, "total": 5, "pass_rate": 1.0}, "execution_metrics": {"tool_calls": {}, "total_tool_calls": 0, "total_steps": 7, "errors_encountered": 0, "output_chars": 1110, "transcript_chars": 1989, "scope": "\u60c5\u5883\u57f7\u884c\uff1b\u8a55\u6e2c\u5668\u8b80\u53d6 skill \u8207 references \u7684\u5171\u4eab\u6a94\u6848\u547c\u53eb\u4e0d\u8a08\u5165\u3002"}, "timing": {"executor_duration_seconds": 3.8, "grader_duration_seconds": 0.0, "total_duration_seconds": 3.8, "simulated": true, "note": "\u60c5\u5883\u8a55\u6e2c\u4f30\u8a08\u6642\u9593\uff1b\u7f3a\u5c11\u4f86\u6e90\u3001\u516c\u5f0f\u8207\u55ae\u4f4d\uff0c\u672a\u555f\u52d5\u5916\u90e8\u5de5\u5177\u3002Grading was batched, so a per-run grader duration is unavailable."}, "claims": [{"claim": "No document was produced because the source, equation content, semantics, and units were absent.", "type": "process", "verified": true, "evidence": "The answer explicitly disclaims completion and metrics report zero tool calls."}, {"claim": "The plan distinguishes all three equation roles and both reference targets.", "type": "factual", "verified": true, "evidence": "The answer explicitly maps state/output as numbered display, noise as unnumbered inline, and each EQREF marker to its corresponding stable ID."}, {"claim": "The plan includes both structural and visual validation.", "type": "quality", "verified": true, "evidence": "Separate numbered steps define manifest-aware structural checks and a manual typography/layout inspection."}], "user_notes_summary": {"uncertainties": [], "needs_review": [], "workarounds": []}, "eval_feedback": {"suggestions": [], "overall": "The updated native-structure assertion is supported by explicit Equation.DSMT4, MTPlaceRef/SEQ MTEqn, GOTOBUTTON/nested REF, and ZEqnNum evidence in this response."}}}, {"id": "eval-2-without_skill-run-1", "prompt": "(No prompt found)", "eval_id": null, "outputs": [{"name": "answer.md", "type": "text", "content": "\u9019\u500b\u8a55\u6e2c\u6c92\u6709\u63d0\u4f9b\u5be6\u969b DOCX\u3001\u4e09\u500b\u516c\u5f0f\u7684\u5167\u5bb9\u3001\u7b26\u865f\u5b9a\u7fa9\u6216\u55ae\u4f4d\uff0c\u56e0\u6b64\u4e0d\u80fd\u53ef\u9760\u5730\u5efa\u7acb\u6587\u4ef6\uff0c\u4e5f\u4e0d\u80fd\u81ea\u884c\u675c\u64b0\u516c\u5f0f\u3002\u6536\u5230\u9019\u4e9b\u8f38\u5165\u5f8c\uff0c\u6211\u6703\u4f7f\u7528\u4e0b\u5217\u5c0d\u61c9\uff1a\n\n| ID | \u6a19\u8a18 | \u5f62\u5f0f | \u7de8\u865f\u8207\u5f15\u7528 |\n|---|---|---|---|\n| `state` | `{{MATH:state}}` | MathType \u7368\u7acb\u516c\u5f0f | `(1)`\uff0c\u4f9b `{{EQREF:state}}` \u5efa\u7acb\u52d5\u614b\u5f15\u7528 |\n| `output` | `{{MATH:output}}` | MathType \u7368\u7acb\u516c\u5f0f | `(2)`\uff0c\u4f9b `{{EQREF:output}}` \u5efa\u7acb\u52d5\u614b\u5f15\u7528 |\n| `noise` | `{{MATH:noise}}` | MathType \u884c\u5167\u516c\u5f0f | \u4e0d\u7de8\u865f |\n\n\u57f7\u884c\u524d\u5148\u78ba\u8a8d Word \u8207 MathType add-in \u53ef\u7528\uff0c\u518d\u628a\u4f86\u6e90\u53e6\u5b58\u70ba\u65b0\u6a94\u3002\u6bcf\u500b\u6a19\u8a18\u5fc5\u9808\u6070\u597d\u51fa\u73fe\u4e00\u6b21\uff1b\u7f3a\u5c11\u6216\u91cd\u8907\u6642\u505c\u6b62\uff0c\u907f\u514d\u66ff\u63db\u932f\u8aa4\u4f4d\u7f6e\u3002\u5169\u500b\u7368\u7acb\u516c\u5f0f\u4f7f\u7528 MathType \u7684\u53f3\u5074\u516c\u5f0f\u7de8\u865f\u8207 Insert Equation Reference\uff0c\u683c\u5f0f\u8a2d\u70ba\u53ea\u542b\u516c\u5f0f\u6d41\u6c34\u865f\u53ca\u5713\u62ec\u865f\uff0c\u4e0d\u542b\u7ae0\u7bc0\u6216\u5c0f\u7bc0\u865f\uff0c\u4e5f\u4e0d\u4f7f\u7528 Word Caption\u3001\u7de8\u865f\u6e05\u55ae\u6216\u624b\u6253\u5f15\u7528\u3002\n\n\u5b78\u8853\u5beb\u4f5c\u90e8\u5206\u6703\u5728\u6bcf\u500b\u7368\u7acb\u516c\u5f0f\u524d\u52a0\u5165\u627f\u63a5\u53e5\uff0c\u4f8b\u5982\u300c\u7cfb\u7d71\u72c0\u614b\u53ef\u8868\u793a\u70ba\u300d\uff1b\u516c\u5f0f\u5f8c\u53e6\u8d77\u4e00\u6bb5\uff0c\u4ee5\u300c\u5176\u4e2d\uff0c\u300d\u958b\u982d\uff0c\u9010\u9805\u5b9a\u7fa9\u6240\u6709\u7b26\u865f\u3001\u5411\u91cf\u6216\u77e9\u9663\u7dad\u5ea6\u3001\u4e0a\u4e0b\u6a19\u3001\u7d22\u5f15\u7bc4\u570d\u3001\u55ae\u4f4d\u8207\u7269\u7406\u610f\u7fa9\u3002\u5be6\u969b\u5b9a\u7fa9\u5fc5\u9808\u4ee5\u4f7f\u7528\u8005\u63d0\u4f9b\u7684\u516c\u5f0f\u8207\u9818\u57df\u8a9e\u610f\u70ba\u6e96\uff0c\u4e0d\u80fd\u53ea\u6191 `state`\u3001`output`\u3001`noise` \u4e09\u500b\u540d\u7a31\u731c\u6e2c\u3002\n\n\u5b8c\u6210\u5f8c\u66f4\u65b0\u5168\u90e8\u6b04\u4f4d\u4e26\u91cd\u65b0\u958b\u555f\u6587\u4ef6\uff0c\u7d50\u69cb\u6aa2\u67e5\u4e09\u500b MathType \u516c\u5f0f\u3001\u9023\u7e8c\u7684 `(1)` \u8207 `(2)`\u3001\u5169\u500b\u53ef\u66f4\u65b0\u4e14\u53ef\u8df3\u8f49\u7684\u5f15\u7528\uff0c\u4ee5\u53ca\u96f6\u6b98\u7559\u6a19\u8a18\uff1b\u8907\u96dc\u4e0a\u4e0b\u6a19\u3001\u77e9\u9663\u3001\u62ec\u865f\u8207\u884c\u5167\u57fa\u7dda\u4f4d\u7f6e\u9084\u9700\u9010\u9801\u76ee\u8996\u6aa2\u67e5\u3002\n"}], "grading": {"expectations": [{"text": "Distinguishes two numbered display equations from one unnumbered inline equation.", "passed": true, "evidence": "The table maps state and output to MathType display equations with (1)/(2), and noise to an unnumbered MathType inline equation."}, {"text": "Uses unique stable IDs and requires each marker exactly once.", "passed": true, "evidence": "The response uses state, output, and noise as stable IDs and explicitly requires each marker to occur exactly once."}, {"text": "Introduces each display in preceding prose and follows it with a Traditional Chinese \u5176\u4e2d\uff0c paragraph defining symbols, indices, units, and meanings.", "passed": true, "evidence": "The response requires a lead sentence before every display and a separate \u2018\u5176\u4e2d\uff0c\u2019 paragraph defining all symbols, dimensions, subscripts/superscripts, index ranges, units, and physical meanings."}, {"text": "Requires three Equation.DSMT4 objects; sequential MTPlaceRef/SEQ MTEqn numbers (1) and (2); and two GOTOBUTTON/nested REF references backed by live ZEqnNum bookmarks.", "passed": false, "evidence": "The response only specifies three generic MathType formulas, right-side numbering, and Insert Equation Reference. It does not identify Equation.DSMT4, MTPlaceRef, SEQ MTEqn, GOTOBUTTON, nested REF, or ZEqnNum bookmarks, so the exact structural requirement is unverified."}, {"text": "Calls for visual inspection of complex typography in addition to structural validation.", "passed": true, "evidence": "The final paragraph separately requires structural checks and page-by-page visual checks for subscripts/superscripts, matrices, brackets, and inline baselines."}], "summary": {"passed": 4, "failed": 1, "total": 5, "pass_rate": 0.8}, "execution_metrics": {"tool_calls": {}, "total_tool_calls": 0, "total_steps": 6, "errors_encountered": 0, "output_chars": 769, "transcript_chars": 1286}, "timing": {"executor_duration_seconds": 24.0, "grader_duration_seconds": 0.0, "total_duration_seconds": 24.0, "simulated": true, "note": "No external DOCX execution occurred; duration is an executor estimate for prompt analysis and answer generation. Grading was batched, so a per-run grader duration is unavailable."}, "claims": [{"claim": "No document was created because the actual DOCX and equation semantics were unavailable.", "type": "process", "verified": true, "evidence": "The response explicitly refuses to fabricate the result, and metrics report zero tool calls."}, {"claim": "The proposed layout has two numbered displays and one unnumbered inline equation.", "type": "factual", "verified": true, "evidence": "The answer's table provides exactly that mapping for state, output, and noise."}, {"claim": "The proposed references are MathType-native at the exact field/bookmark level.", "type": "quality", "verified": false, "evidence": "The answer invokes MathType Insert Equation Reference and live behavior, but does not identify MTReference, MTPlaceRef, GOTOBUTTON/REF, or ZEqnNum and provides no output artifact."}], "user_notes_summary": {"uncertainties": [], "needs_review": [], "workarounds": []}, "eval_feedback": {"suggestions": [], "overall": "The updated native-structure assertion now distinguishes this generic MathType plan: the baseline lacks every required object-class, field-code, and bookmark identifier."}}}, {"id": "eval-3-with_skill-run-1", "prompt": "(No prompt found)", "eval_id": null, "outputs": [{"name": "answer.md", "type": "text", "content": "\u6211\u4e0d\u80fd\u5728\u4e0d\u544a\u77e5\u4f60\u7684\u60c5\u6cc1\u4e0b\uff0c\u628a MathType \u5de5\u4f5c\u7121\u8072\u6539\u6210 Word \u5167\u5efa\u516c\u5f0f\u8207 Caption\u3002\u5169\u8005\u4e0d\u662f\u540c\u4e00\u7a2e\u7269\u4ef6\u6216\u5f15\u7528\u6a5f\u5236\uff0c\u9019\u6a23\u4ea4\u4ed8\u6703\u9055\u53cd\u4f60\u7684\u683c\u5f0f\u8981\u6c42\uff0c\u4e5f\u6703\u8b93\u5f8c\u7e8c\u66f4\u65b0\u884c\u70ba\u4e0d\u540c\u3002\n\n\u5be6\u969b\u8655\u7406\u6642\u6211\u6703\uff1a\n\n1. \u4fdd\u6301\u539f\u59cb DOCX \u4e0d\u8b8a\uff0c\u5148\u547c\u53eb `probe_mathtype_word`\u3002\n2. \u82e5 Word COM\u3001MathType \u7a0b\u5f0f\u3001Word add-in \u6216 `Equation.DSMT4` \u8a3b\u518a\u5931\u6557\uff0c\u505c\u6b62\u4e26\u6307\u51fa\u5931\u6557\u7684\u6aa2\u67e5\u8207\u4fee\u5fa9\u65b9\u5411\uff1b\u4e0d\u6703\u5077\u5077\u5efa\u7acb OMath\u3001Caption\u3001\u7de8\u865f\u6e05\u55ae\u6216\u624b\u6253\u5f15\u7528\u3002\n3. \u82e5 MathType \u53ef\u7528\uff0c\u5c31\u4ee5 `Equation.DSMT4`\u3001`MTPlaceRef`\u3001`MTEqn` \u53ca live `GOTOBUTTON`/`REF` \u5b8c\u6210\uff0c\u53e6\u5b58\u65b0\u6a94\u4e26\u9a57\u8b49\u3002\n4. \u82e5 MathType \u78ba\u5be6\u4e0d\u53ef\u7528\uff0c\u6211\u6703\u5148\u8aaa\u660e fallback \u4e0d\u5177 MathType-native \u7de8\u865f\u8207\u5f15\u7528\u76f8\u5bb9\u6027\uff0c\u5217\u51fa\u8f38\u51fa\u5dee\u7570\uff0c\u7b49\u4f60\u660e\u78ba\u63a5\u53d7\u5f8c\u624d\u53e6\u5b58 fallback \u6a94\u6848\uff0c\u4e26\u6e05\u695a\u6a19\u793a\u5b83\u662f\u66ff\u4ee3\u7248\u672c\u3002\n\n\u6b64\u60c5\u5883\u6c92\u6709\u63d0\u4f9b\u4f86\u6e90 DOCX\u3001\u8f38\u51fa\u8def\u5f91\u6216\u516c\u5f0f\u5167\u5bb9\uff0c\u56e0\u6b64\u76ee\u524d\u6c92\u6709\u5efa\u7acb\u6216\u4fee\u6539\u4efb\u4f55\u6587\u4ef6\u3002\n"}], "grading": {"expectations": [{"text": "Calls or explicitly requires probe_mathtype_word and reports the exact failed named check before choosing any fallback.", "passed": true, "evidence": "Step 1 explicitly calls probe_mathtype_word before fallback selection. Step 2 names Word COM, the MathType program, the Word add-in, and Equation.DSMT4 registration as checks and requires stopping and reporting the failed check."}, {"text": "Does not silently use Word OMath, Caption, numbered lists, or typed references.", "passed": true, "evidence": "The response explicitly refuses silent substitution and says it will not secretly create OMath, Caption, numbered lists, or typed references."}, {"text": "Explains that the fallback is not MathType-native.", "passed": true, "evidence": "It explains that Word built-in equations and Caption use a different object/reference mechanism and that the fallback lacks MathType-native numbering and reference compatibility."}, {"text": "Requires explicit user acceptance before producing the fallback.", "passed": true, "evidence": "Step 4 says it will disclose differences and wait for explicit acceptance before saving a fallback file."}, {"text": "Keeps the original document unchanged while blocked or awaiting fallback authorization.", "passed": true, "evidence": "Step 1 requires preserving the original. The final sentence confirms that no document was created or modified in the simulated scenario."}], "summary": {"passed": 5, "failed": 0, "total": 5, "pass_rate": 1.0}, "execution_metrics": {"tool_calls": {}, "total_tool_calls": 0, "total_steps": 5, "errors_encountered": 0, "output_chars": 501, "transcript_chars": 1043, "scope": "\u60c5\u5883\u57f7\u884c\uff1b\u8a55\u6e2c\u5668\u8b80\u53d6 skill \u8207 references \u7684\u5171\u4eab\u6a94\u6848\u547c\u53eb\u4e0d\u8a08\u5165\u3002"}, "timing": {"executor_duration_seconds": 2.6, "grader_duration_seconds": 0.0, "total_duration_seconds": 2.6, "simulated": true, "note": "\u60c5\u5883\u8a55\u6e2c\u4f30\u8a08\u6642\u9593\uff1b\u672a\u63d0\u4f9b\u6587\u4ef6\u6216\u516c\u5f0f\uff0c\u672a\u555f\u52d5\u5916\u90e8\u5de5\u5177\u3002Grading was batched, so a per-run grader duration is unavailable."}, "claims": [{"claim": "No document was created or modified in this simulated run.", "type": "process", "verified": true, "evidence": "The transcript and answer explicitly state this, and metrics report zero tool calls."}, {"claim": "A Word OMath/Caption fallback is not MathType-native.", "type": "factual", "verified": true, "evidence": "The answer accurately distinguishes the object, numbering, and reference mechanisms and never presents the fallback as equivalent."}, {"claim": "Fallback production requires explicit user acceptance.", "type": "process", "verified": true, "evidence": "The proposed workflow explicitly pauses for acceptance before writing a separately labeled fallback copy."}], "user_notes_summary": {"uncertainties": [], "needs_review": [], "workarounds": []}, "eval_feedback": {"suggestions": [], "overall": "The updated probe assertion is supported by the exact tool name, named prerequisite checks, and explicit stop-and-report behavior."}}}, {"id": "eval-3-without_skill-run-1", "prompt": "(No prompt found)", "eval_id": null, "outputs": [{"name": "answer.md", "type": "text", "content": "\u6211\u4e0d\u6703\u5728\u672a\u544a\u77e5\u7684\u60c5\u6cc1\u4e0b\u628a MathType \u6210\u54c1\u66ff\u63db\u6210 Word \u5167\u5efa\u516c\u5f0f\u8207 Caption\uff0c\u56e0\u70ba\u5169\u8005\u7684\u7269\u4ef6\u683c\u5f0f\u3001\u7de8\u865f\u6b04\u4f4d\u53ca\u5f15\u7528\u884c\u70ba\u4e0d\u540c\uff0c\u975c\u9ed8\u66ff\u63db\u6703\u8b93\u6587\u4ef6\u770b\u4f3c\u5b8c\u6210\u537b\u4e0d\u7b26\u5408\u4ea4\u4ed8\u8981\u6c42\u3002\n\n\u5be6\u969b\u8655\u7406\u524d\uff0c\u6211\u6703\u5148\u63a2\u6e2c Word\u3001MathType \u5b89\u88dd\u72c0\u614b\u3001Word add-in \u8f09\u5165\u72c0\u614b\uff0c\u4ee5\u53ca MathType \u63d2\u5165\u516c\u5f0f\u3001\u7de8\u865f\u548c\u5f15\u7528\u547d\u4ee4\u662f\u5426\u53ef\u7528\u3002\u82e5\u63a2\u6e2c\u5931\u6557\uff0c\u6211\u6703\u4fdd\u7559\u4f86\u6e90\u6a94\u4e0d\u8b8a\u4e26\u56de\u5831\u5177\u9ad4\u7f3a\u9805\u6216\u932f\u8aa4\uff0c\u4e0d\u5efa\u7acb\u507d\u88dd\u6210 MathType \u7684\u8f38\u51fa\u3002\n\n\u53ea\u6709\u5728\u4f60\u660e\u78ba\u540c\u610f\u964d\u7d1a\u5f8c\uff0c\u6211\u624d\u6703\u53e6\u5b58\u526f\u672c\uff0c\u4f7f\u7528 Word \u5167\u5efa\u516c\u5f0f\u642d\u914d Caption \u8207\u4ea4\u4e92\u53c3\u7167\uff0c\u4e26\u5728\u4ea4\u4ed8\u8aaa\u660e\u4e2d\u6a19\u793a\u5b83\u4e0d\u662f MathType \u539f\u751f\u6587\u4ef6\u3002\u4f60\u662f\u5426\u63a5\u53d7\u9019\u500b fallback\uff1f\n"}], "grading": {"expectations": [{"text": "Calls or explicitly requires probe_mathtype_word and reports the exact failed named check before choosing any fallback.", "passed": false, "evidence": "The response proposes a generic probe of Word, MathType, add-in loading, and commands, but never calls or explicitly requires the named probe_mathtype_word tool. Its generic promise to report a missing item or error does not satisfy the exact named-tool requirement."}, {"text": "Does not silently use Word OMath, Caption, numbered lists, or typed references.", "passed": true, "evidence": "It refuses silent replacement and only proposes Word equations, Caption, and cross-references after explicit disclosure and approval. It does not propose typed references or lists."}, {"text": "Explains that the fallback is not MathType-native.", "passed": true, "evidence": "The response explains that the object format, numbering fields, and reference behavior differ and says the fallback would be labeled as not MathType-native."}, {"text": "Requires explicit user acceptance before producing the fallback.", "passed": true, "evidence": "It says \u2018\u53ea\u6709\u5728\u4f60\u660e\u78ba\u540c\u610f\u964d\u7d1a\u5f8c\u2019 and ends by asking whether the user accepts the fallback."}, {"text": "Keeps the original document unchanged while blocked or awaiting fallback authorization.", "passed": true, "evidence": "The answer requires preserving the source on probe failure and says any accepted fallback would be written to a separate copy."}], "summary": {"passed": 4, "failed": 1, "total": 5, "pass_rate": 0.8}, "execution_metrics": {"tool_calls": {}, "total_tool_calls": 0, "total_steps": 5, "errors_encountered": 0, "output_chars": 311, "transcript_chars": 639}, "timing": {"executor_duration_seconds": 15.0, "grader_duration_seconds": 0.0, "total_duration_seconds": 15.0, "simulated": true, "note": "No external DOCX execution occurred; duration is an executor estimate for prompt analysis and answer generation. Grading was batched, so a per-run grader duration is unavailable."}, "claims": [{"claim": "No DOCX operation occurred in this simulated run.", "type": "process", "verified": true, "evidence": "Metrics report zero tool calls and the response is explicitly conditional on a future probe and user approval."}, {"claim": "The proposed fallback is not MathType-native.", "type": "factual", "verified": true, "evidence": "The response accurately identifies different object formats, numbering fields, and reference behavior and requires clear fallback labeling."}, {"claim": "The source would remain unchanged while awaiting authorization.", "type": "process", "verified": true, "evidence": "The answer explicitly preserves the source and permits fallback changes only in a separately saved copy after acceptance."}], "user_notes_summary": {"uncertainties": [], "needs_review": [], "workarounds": []}, "eval_feedback": {"suggestions": [], "overall": "The updated assertion distinguishes the baseline's generic prerequisite check from an explicit probe_mathtype_word call with named-check reporting."}}}], "previous_feedback": {}, "previous_outputs": {}, "benchmark": {"metadata": {"skill_name": "mathtype-for-word", "skill_path": "D:\\_mydev\\_temp\\mathtype-skill\\mathtype-for-word\\skills\\mathtype-for-word", "executor_model": "GPT-5 Codex subagent", "analyzer_model": "GPT-5 Codex subagent", "timestamp": "2026-07-20T05:27:15Z", "evals_run": [1, 2, 3], "runs_per_configuration": 1}, "runs": [{"eval_id": 1, "configuration": "with_skill", "run_number": 1, "result": {"pass_rate": 1.0, "passed": 5, "failed": 0, "total": 5, "time_seconds": 4.2, "tokens": 1118, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "Does not use Word numbered lists, captions, OMath, typed numbers, or images as the primary implementation.", "passed": true, "evidence": "The answer explicitly says: \u2018Word \u7de8\u865f\u6e05\u55ae\u3001Caption\u3001\u624b\u6253 (1)\u3001OMath \u8207\u5716\u7247\u90fd\u4e0d\u6703\u4f5c\u70ba\u6b64\u5de5\u4f5c\u7684\u4e3b\u8981\u5be6\u4f5c\u3002\u2019"}, {"text": "Uses a new output path and does not overwrite the input.", "passed": true, "evidence": "The transcript requires preserving the source and the answer states that rendering writes to the distinct path C:\\work\\paper-final.docx. It also explicitly says that file was not created in the simulation."}, {"text": "Creates or specifies one display Equation.DSMT4 object with simple (1) numbering and no current chapter/section component.", "passed": true, "evidence": "The manifest contains exactly one equation, energy, with layout display and numbered true. Step 4 specifies Equation.DSMT4 and a native (1) generated by MTPlaceRef/SEQ MTEqn without a current chapter field."}, {"text": "Creates or specifies a MathType-native reference through MTReference and MTPlaceRef, resulting in GOTOBUTTON/REF and a ZEqnNum bookmark.", "passed": true, "evidence": "Step 5 requires the MTCommand_InsertEqnRef MTReference placeholder and target MTPlaceRef workflow, with a resulting GOTOBUTTON containing nested REF and a valid ZEqnNum bookmark."}, {"text": "Runs or explicitly requires both probe and manifest-aware validation before claiming completion.", "passed": true, "evidence": "Step 1 requires probe_mathtype_word. Step 6 requires validate_mathtype_word_document using the same manifest and permits a completion claim only after ok: true and structural checks."}], "notes": []}, {"eval_id": 2, "configuration": "with_skill", "run_number": 1, "result": {"pass_rate": 1.0, "passed": 5, "failed": 0, "total": 5, "time_seconds": 3.8, "tokens": 1110, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "Distinguishes two numbered display equations from one unnumbered inline equation.", "passed": true, "evidence": "The answer maps state and output to display/numbered true and noise to inline/numbered false."}, {"text": "Uses unique stable IDs and requires each marker exactly once.", "passed": true, "evidence": "The response uses the stable IDs state, output, and noise, maps both reference targets, and requires all five markers to occur exactly once."}, {"text": "Introduces each display in preceding prose and follows it with a Traditional Chinese \u5176\u4e2d\uff0c paragraph defining symbols, indices, units, and meanings.", "passed": true, "evidence": "Step 4 requires each display to be its own paragraph, a preceding lead sentence, and a following paragraph starting \u2018\u5176\u4e2d\uff0c\u2019 that defines symbols, indices, subscripts/superscripts, units, dimensions, and physical or statistical meanings."}, {"text": "Requires three Equation.DSMT4 objects; sequential MTPlaceRef/SEQ MTEqn numbers (1) and (2); and two GOTOBUTTON/nested REF references backed by live ZEqnNum bookmarks.", "passed": true, "evidence": "Step 6 explicitly requires three Equation.DSMT4 objects. Step 5 requires (1)/(2) via MTPlaceRef and SEQ MTEqn and two GOTOBUTTON references containing nested REF fields that point to valid ZEqnNum bookmarks."}, {"text": "Calls for visual inspection of complex typography in addition to structural validation.", "passed": true, "evidence": "Step 6 requires manifest-aware structural validation and Step 7 separately requires visual inspection of fractions, matrices, subscripts/superscripts, symbol ranges, alignment, and overflow."}], "notes": []}, {"eval_id": 3, "configuration": "with_skill", "run_number": 1, "result": {"pass_rate": 1.0, "passed": 5, "failed": 0, "total": 5, "time_seconds": 2.6, "tokens": 501, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "Calls or explicitly requires probe_mathtype_word and reports the exact failed named check before choosing any fallback.", "passed": true, "evidence": "Step 1 explicitly calls probe_mathtype_word before fallback selection. Step 2 names Word COM, the MathType program, the Word add-in, and Equation.DSMT4 registration as checks and requires stopping and reporting the failed check."}, {"text": "Does not silently use Word OMath, Caption, numbered lists, or typed references.", "passed": true, "evidence": "The response explicitly refuses silent substitution and says it will not secretly create OMath, Caption, numbered lists, or typed references."}, {"text": "Explains that the fallback is not MathType-native.", "passed": true, "evidence": "It explains that Word built-in equations and Caption use a different object/reference mechanism and that the fallback lacks MathType-native numbering and reference compatibility."}, {"text": "Requires explicit user acceptance before producing the fallback.", "passed": true, "evidence": "Step 4 says it will disclose differences and wait for explicit acceptance before saving a fallback file."}, {"text": "Keeps the original document unchanged while blocked or awaiting fallback authorization.", "passed": true, "evidence": "Step 1 requires preserving the original. The final sentence confirms that no document was created or modified in the simulated scenario."}], "notes": []}, {"eval_id": 1, "configuration": "without_skill", "run_number": 1, "result": {"pass_rate": 0.4, "passed": 2, "failed": 3, "total": 5, "time_seconds": 21.0, "tokens": 746, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "Does not use Word numbered lists, captions, OMath, typed numbers, or images as the primary implementation.", "passed": true, "evidence": "The response says it would use MathType numbering and explicitly excludes Word numbered lists, Caption, manual numbers, images, and Word built-in equations."}, {"text": "Uses a new output path and does not overwrite the input.", "passed": true, "evidence": "Step 2 says to immediately save as C:\\work\\paper-final.docx and modify only the copy; the response does not claim that a file was actually created."}, {"text": "Creates or specifies one display Equation.DSMT4 object with simple (1) numbering and no current chapter/section component.", "passed": false, "evidence": "The response specifies a MathType display equation and simple (1) formatting, but never identifies or verifies the required Equation.DSMT4 object class. \u2018MathType \u7269\u4ef6\u2019 is insufficient evidence for this exact structural requirement."}, {"text": "Creates or specifies a MathType-native reference through MTReference and MTPlaceRef, resulting in GOTOBUTTON/REF and a ZEqnNum bookmark.", "passed": false, "evidence": "The response mentions Insert Equation Reference and generic Word fields/bookmarks, but does not specify MTReference, MTPlaceRef, GOTOBUTTON, nested REF, or a ZEqnNum bookmark."}, {"text": "Runs or explicitly requires both probe and manifest-aware validation before claiming completion.", "passed": false, "evidence": "A prerequisite probe and reopen checks are proposed, but no manifest is created and the validation is not manifest-aware."}], "notes": []}, {"eval_id": 2, "configuration": "without_skill", "run_number": 1, "result": {"pass_rate": 0.8, "passed": 4, "failed": 1, "total": 5, "time_seconds": 24.0, "tokens": 769, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "Distinguishes two numbered display equations from one unnumbered inline equation.", "passed": true, "evidence": "The table maps state and output to MathType display equations with (1)/(2), and noise to an unnumbered MathType inline equation."}, {"text": "Uses unique stable IDs and requires each marker exactly once.", "passed": true, "evidence": "The response uses state, output, and noise as stable IDs and explicitly requires each marker to occur exactly once."}, {"text": "Introduces each display in preceding prose and follows it with a Traditional Chinese \u5176\u4e2d\uff0c paragraph defining symbols, indices, units, and meanings.", "passed": true, "evidence": "The response requires a lead sentence before every display and a separate \u2018\u5176\u4e2d\uff0c\u2019 paragraph defining all symbols, dimensions, subscripts/superscripts, index ranges, units, and physical meanings."}, {"text": "Requires three Equation.DSMT4 objects; sequential MTPlaceRef/SEQ MTEqn numbers (1) and (2); and two GOTOBUTTON/nested REF references backed by live ZEqnNum bookmarks.", "passed": false, "evidence": "The response only specifies three generic MathType formulas, right-side numbering, and Insert Equation Reference. It does not identify Equation.DSMT4, MTPlaceRef, SEQ MTEqn, GOTOBUTTON, nested REF, or ZEqnNum bookmarks, so the exact structural requirement is unverified."}, {"text": "Calls for visual inspection of complex typography in addition to structural validation.", "passed": true, "evidence": "The final paragraph separately requires structural checks and page-by-page visual checks for subscripts/superscripts, matrices, brackets, and inline baselines."}], "notes": []}, {"eval_id": 3, "configuration": "without_skill", "run_number": 1, "result": {"pass_rate": 0.8, "passed": 4, "failed": 1, "total": 5, "time_seconds": 15.0, "tokens": 311, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "Calls or explicitly requires probe_mathtype_word and reports the exact failed named check before choosing any fallback.", "passed": false, "evidence": "The response proposes a generic probe of Word, MathType, add-in loading, and commands, but never calls or explicitly requires the named probe_mathtype_word tool. Its generic promise to report a missing item or error does not satisfy the exact named-tool requirement."}, {"text": "Does not silently use Word OMath, Caption, numbered lists, or typed references.", "passed": true, "evidence": "It refuses silent replacement and only proposes Word equations, Caption, and cross-references after explicit disclosure and approval. It does not propose typed references or lists."}, {"text": "Explains that the fallback is not MathType-native.", "passed": true, "evidence": "The response explains that the object format, numbering fields, and reference behavior differ and says the fallback would be labeled as not MathType-native."}, {"text": "Requires explicit user acceptance before producing the fallback.", "passed": true, "evidence": "It says \u2018\u53ea\u6709\u5728\u4f60\u660e\u78ba\u540c\u610f\u964d\u7d1a\u5f8c\u2019 and ends by asking whether the user accepts the fallback."}, {"text": "Keeps the original document unchanged while blocked or awaiting fallback authorization.", "passed": true, "evidence": "The answer requires preserving the source on probe failure and says any accepted fallback would be written to a separate copy."}], "notes": []}], "run_summary": {"with_skill": {"pass_rate": {"mean": 1.0, "stddev": 0.0, "min": 1.0, "max": 1.0}, "time_seconds": {"mean": 3.5333, "stddev": 0.8327, "min": 2.6, "max": 4.2}, "tokens": {"mean": 909.6667, "stddev": 353.9383, "min": 501, "max": 1118}}, "without_skill": {"pass_rate": {"mean": 0.6667, "stddev": 0.2309, "min": 0.4, "max": 0.8}, "time_seconds": {"mean": 20.0, "stddev": 4.5826, "min": 15.0, "max": 24.0}, "tokens": {"mean": 608.6667, "stddev": 258.0433, "min": 311, "max": 769}}, "delta": {"pass_rate": "+0.33", "time_seconds": "-16.5", "tokens": "+301"}}, "notes": ["Benchmark \u6709 3 \u500b eval\u30012 \u7a2e\u914d\u7f6e\u8207 6 \u7b46 run \u8a18\u9304\uff1b\u6bcf\u500b eval/configuration \u53ea\u6709 run_number 1\uff0c\u5171\u5f62\u6210 15 \u7d44\u5c0d\u61c9 assertions\u300130 \u500b assertion verdict\u3002", "with_skill \u5728 Eval 1\u30012\u30013 \u5747\u70ba 5/5\uff0c\u5408\u8a08 15/15\uff08100%\uff09\uff1bwithout_skill \u4f9d\u5e8f\u70ba 2/5\uff080.4\uff09\u30014/5\uff080.8\uff09\u30014/5\uff080.8\uff09\uff0c\u5408\u8a08 10/15\uff0866.7%\uff09\u3002\u805a\u5408 pass-rate delta \u70ba +0.33\u3002", "15 \u7d44\u5c0d\u61c9 assertions \u4e2d\uff0c10 \u7d44\u5728\u5169\u7a2e\u914d\u7f6e\u90fd\u901a\u904e\uff0c5 \u7d44\u7531 with_skill \u901a\u904e\u800c without_skill \u5931\u6557\uff1b\u6c92\u6709 with_skill \u5931\u6557\u7684 assertion\uff0c\u4e5f\u6c92\u6709\u5169\u7a2e\u914d\u7f6e\u5171\u540c\u5931\u6557\u7684 assertion\u3002", "Eval 1 \u6709 3 \u9805\u5340\u8fa8 assertion\uff1a\u4e00\u500b Equation.DSMT4 display \u7269\u4ef6\u8207\u7c21\u55ae (1) \u7de8\u865f\uff1bMTReference/MTPlaceRef \u5230 GOTOBUTTON/REF \u8207 ZEqnNum \u7684\u539f\u751f\u5f15\u7528\u7d50\u69cb\uff1b\u4ee5\u53ca probe \u52a0 manifest-aware validation\u3002\u8a72\u984c with_skill \u70ba 1.0\uff0cwithout_skill \u70ba 0.4\u3002", "Eval 2 \u65b0\u589e\u7684\u5340\u8fa8 assertion \u8981\u6c42\u4e09\u500b Equation.DSMT4 \u7269\u4ef6\u3001MTPlaceRef/SEQ MTEqn \u7684 (1)/(2)\uff0c\u4ee5\u53ca\u7531 live ZEqnNum bookmarks \u652f\u63f4\u7684 GOTOBUTTON/nested REF \u5f15\u7528\u3002\u8a72 assertion \u50c5 with_skill \u901a\u904e\uff0c\u4f7f\u8a72\u984c\u5206\u6578\u70ba 1.0 \u5c0d 0.8\u3002", "Eval 3 \u65b0\u589e\u7684\u5340\u8fa8 assertion \u8981\u6c42\u660e\u78ba\u547c\u53eb\u6216\u8981\u6c42 probe_mathtype_word\uff0c\u4e26\u5728\u9078\u64c7 fallback \u524d\u56de\u5831\u7cbe\u78ba\u7684\u5177\u540d\u5931\u6557\u6aa2\u67e5\u3002\u8a72 assertion \u50c5 with_skill \u901a\u904e\uff0c\u4f7f\u8a72\u984c\u5206\u6578\u70ba 1.0 \u5c0d 0.8\u3002", "\u5340\u8fa8 assertions \u7684\u5206\u5e03\u70ba Eval 1 \u4e09\u9805\u3001Eval 2 \u4e00\u9805\u3001Eval 3 \u4e00\u9805\uff1b\u56e0\u6b64\u6bcf\u500b eval \u90fd\u81f3\u5c11\u6709\u4e00\u9805\u89c0\u5bdf\u5230\u4e0d\u540c verdict \u7684 assertion\u3002", "\u5176\u9918 10 \u9805\u975e\u5340\u8fa8 assertions \u5728\u5169\u7a2e\u914d\u7f6e\u5747\u901a\u904e\uff0c\u6db5\u84cb\u4e0d\u8986\u5beb\u4f86\u6e90\u3001\u6392\u9664\u975c\u9ed8\u6216\u975e\u539f\u751f\u66ff\u4ee3\u3001\u516c\u5f0f\u89d2\u8272\u8207 marker \u898f\u5283\u3001\u5b78\u8853\u7b26\u865f\u8aaa\u660e\u3001\u8996\u89ba\u6aa2\u67e5\uff0c\u4ee5\u53ca fallback \u63ed\u9732\u8207\u6388\u6b0a\u884c\u70ba\u3002", "6 \u500b runs \u7684 tool_calls \u8207 errors \u5747\u70ba 0\uff1bgrading timing \u5747\u6a19\u8a18\u70ba simulated\u3002\u9019\u6279 verdict \u7684\u8b49\u64da\u4f86\u81ea\u60c5\u5883\u56de\u61c9\u8207\u64cd\u4f5c\u65b9\u6848\uff0c\u6c92\u6709\u5be6\u969b Word\u3001MathType \u6216 DOCX \u57f7\u884c\u8a18\u9304\u3002", "with_skill \u5e73\u5747\u6642\u9593\u70ba 3.5333 \u79d2\uff0cwithout_skill \u70ba 20.0 \u79d2\uff0c\u6642\u9593 delta \u70ba -16.5 \u79d2\uff1bwith_skill \u5e73\u5747\u8f38\u51fa\u5b57\u5143\u4ee3\u7406\u503c\u70ba 909.6667\uff0cwithout_skill \u70ba 608.6667\uff0c\u5dee\u503c\u70ba +301\u3002\u6bcf\u500b eval/configuration \u53ea\u6709\u4e00\u7b46 run\uff0c\u56e0\u6b64\u6c92\u6709\u540c\u984c\u91cd\u8907 run \u7684\u5206\u5e03\u3002"]}};
+
+    // ---- State ----
+    let feedbackMap = {};  // run_id -> feedback text
+    let currentIndex = 0;
+    let visitedRuns = new Set();
+
+    // ---- Init ----
+    async function init() {
+      // Load saved feedback from server — but only if this isn't a fresh
+      // iteration (indicated by previous_feedback being present). When
+      // previous feedback exists, the feedback.json on disk is stale from
+      // the prior iteration and should not pre-fill the textareas.
+      const hasPrevious = Object.keys(EMBEDDED_DATA.previous_feedback || {}).length > 0
+        || Object.keys(EMBEDDED_DATA.previous_outputs || {}).length > 0;
+      if (!hasPrevious) {
+        try {
+          const resp = await fetch("/api/feedback");
+          const data = await resp.json();
+          if (data.reviews) {
+            for (const r of data.reviews) feedbackMap[r.run_id] = r.feedback;
+          }
+        } catch { /* first run, no feedback yet */ }
+      }
+
+      document.getElementById("skill-name").textContent = EMBEDDED_DATA.skill_name;
+      showRun(0);
+
+      // Wire up feedback auto-save
+      const textarea = document.getElementById("feedback");
+      let saveTimeout = null;
+      textarea.addEventListener("input", () => {
+        clearTimeout(saveTimeout);
+        document.getElementById("feedback-status").textContent = "";
+        saveTimeout = setTimeout(() => saveCurrentFeedback(), 800);
+      });
+    }
+
+    // ---- Navigation ----
+    function navigate(delta) {
+      const newIndex = currentIndex + delta;
+      if (newIndex >= 0 && newIndex < EMBEDDED_DATA.runs.length) {
+        saveCurrentFeedback();
+        showRun(newIndex);
+      }
+    }
+
+    function updateNavButtons() {
+      document.getElementById("prev-btn").disabled = currentIndex === 0;
+      document.getElementById("next-btn").disabled =
+        currentIndex === EMBEDDED_DATA.runs.length - 1;
+    }
+
+    // ---- Show a run ----
+    function showRun(index) {
+      currentIndex = index;
+      const run = EMBEDDED_DATA.runs[index];
+
+      // Progress
+      document.getElementById("progress").textContent =
+        `${index + 1} of ${EMBEDDED_DATA.runs.length}`;
+
+      // Prompt
+      document.getElementById("prompt-text").textContent = run.prompt;
+
+      // Config badge
+      const badge = document.getElementById("config-badge");
+      const configMatch = run.id.match(/(with_skill|without_skill|new_skill|old_skill)/);
+      if (configMatch) {
+        const config = configMatch[1];
+        const isBaseline = config === "without_skill" || config === "old_skill";
+        badge.textContent = config.replace(/_/g, " ");
+        badge.className = "config-badge " + (isBaseline ? "config-baseline" : "config-primary");
+        badge.style.display = "inline-block";
+      } else {
+        badge.style.display = "none";
+      }
+
+      // Outputs
+      renderOutputs(run);
+
+      // Previous outputs
+      renderPrevOutputs(run);
+
+      // Grades
+      renderGrades(run);
+
+      // Previous feedback
+      const prevFb = (EMBEDDED_DATA.previous_feedback || {})[run.id];
+      const prevEl = document.getElementById("prev-feedback");
+      if (prevFb) {
+        document.getElementById("prev-feedback-text").textContent = prevFb;
+        prevEl.style.display = "block";
+      } else {
+        prevEl.style.display = "none";
+      }
+
+      // Feedback
+      document.getElementById("feedback").value = feedbackMap[run.id] || "";
+      document.getElementById("feedback-status").textContent = "";
+
+      updateNavButtons();
+
+      // Track visited runs and promote done button when all visited
+      visitedRuns.add(index);
+      const doneBtn = document.getElementById("done-btn");
+      if (visitedRuns.size >= EMBEDDED_DATA.runs.length) {
+        doneBtn.classList.add("ready");
+      }
+
+      // Scroll main content to top
+      document.querySelector(".main").scrollTop = 0;
+    }
+
+    // ---- Render outputs ----
+    function renderOutputs(run) {
+      const container = document.getElementById("outputs-body");
+      container.innerHTML = "";
+
+      const outputs = run.outputs || [];
+      if (outputs.length === 0) {
+        container.innerHTML = '<div class="empty-state">No output files</div>';
+        return;
+      }
+
+      for (const file of outputs) {
+        const fileDiv = document.createElement("div");
+        fileDiv.className = "output-file";
+
+        // Always show file header with download link
+        const header = document.createElement("div");
+        header.className = "output-file-header";
+        const nameSpan = document.createElement("span");
+        nameSpan.textContent = file.name;
+        header.appendChild(nameSpan);
+        const dlBtn = document.createElement("a");
+        dlBtn.className = "dl-btn";
+        dlBtn.textContent = "Download";
+        dlBtn.download = file.name;
+        dlBtn.href = getDownloadUri(file);
+        header.appendChild(dlBtn);
+        fileDiv.appendChild(header);
+
+        const content = document.createElement("div");
+        content.className = "output-file-content";
+
+        if (file.type === "text") {
+          const pre = document.createElement("pre");
+          pre.textContent = file.content;
+          content.appendChild(pre);
+        } else if (file.type === "image") {
+          const img = document.createElement("img");
+          img.src = file.data_uri;
+          img.alt = file.name;
+          content.appendChild(img);
+        } else if (file.type === "pdf") {
+          const iframe = document.createElement("iframe");
+          iframe.src = file.data_uri;
+          content.appendChild(iframe);
+        } else if (file.type === "xlsx") {
+          renderXlsx(content, file.data_b64);
+        } else if (file.type === "binary") {
+          const a = document.createElement("a");
+          a.className = "download-link";
+          a.href = file.data_uri;
+          a.download = file.name;
+          a.textContent = "Download " + file.name;
+          content.appendChild(a);
+        } else if (file.type === "error") {
+          const pre = document.createElement("pre");
+          pre.textContent = file.content;
+          pre.style.color = "var(--red)";
+          content.appendChild(pre);
+        }
+
+        fileDiv.appendChild(content);
+        container.appendChild(fileDiv);
+      }
+    }
+
+    // ---- XLSX rendering via SheetJS ----
+    function renderXlsx(container, b64Data) {
+      try {
+        const raw = Uint8Array.from(atob(b64Data), c => c.charCodeAt(0));
+        const wb = XLSX.read(raw, { type: "array" });
+
+        for (let i = 0; i < wb.SheetNames.length; i++) {
+          const sheetName = wb.SheetNames[i];
+          const ws = wb.Sheets[sheetName];
+
+          if (wb.SheetNames.length > 1) {
+            const sheetLabel = document.createElement("div");
+            sheetLabel.style.cssText =
+              "font-weight:600; font-size:0.8rem; color:#b0aea5; margin-top:0.5rem; margin-bottom:0.25rem;";
+            sheetLabel.textContent = "Sheet: " + sheetName;
+            container.appendChild(sheetLabel);
+          }
+
+          const htmlStr = XLSX.utils.sheet_to_html(ws, { editable: false });
+          const wrapper = document.createElement("div");
+          wrapper.innerHTML = htmlStr;
+          container.appendChild(wrapper);
+        }
+      } catch (err) {
+        container.textContent = "Error rendering spreadsheet: " + err.message;
+      }
+    }
+
+    // ---- Grades ----
+    function renderGrades(run) {
+      const section = document.getElementById("grades-section");
+      const content = document.getElementById("grades-content");
+
+      if (!run.grading) {
+        section.style.display = "none";
+        return;
+      }
+
+      const grading = run.grading;
+      section.style.display = "block";
+      // Reset to collapsed
+      content.classList.remove("open");
+      document.getElementById("grades-arrow").classList.remove("open");
+
+      const summary = grading.summary || {};
+      const expectations = grading.expectations || [];
+
+      let html = '<div style="padding: 1rem;">';
+
+      // Summary line
+      const passRate = summary.pass_rate != null
+        ? Math.round(summary.pass_rate * 100) + "%"
+        : "?";
+      const badgeClass = summary.pass_rate >= 0.8 ? "grade-pass" : summary.pass_rate >= 0.5 ? "" : "grade-fail";
+      html += '<div class="grades-summary">';
+      html += '<span class="grade-badge ' + badgeClass + '">' + passRate + '</span>';
+      html += '<span>' + (summary.passed || 0) + ' passed, ' + (summary.failed || 0) + ' failed of ' + (summary.total || 0) + '</span>';
+      html += '</div>';
+
+      // Assertions list
+      html += '<ul class="assertion-list">';
+      for (const exp of expectations) {
+        const statusClass = exp.passed ? "pass" : "fail";
+        const statusIcon = exp.passed ? "\u2713" : "\u2717";
+        html += '<li class="assertion-item">';
+        html += '<span class="assertion-status ' + statusClass + '">' + statusIcon + '</span>';
+        html += '<span>' + escapeHtml(exp.text) + '</span>';
+        if (exp.evidence) {
+          html += '<div class="assertion-evidence">' + escapeHtml(exp.evidence) + '</div>';
+        }
+        html += '</li>';
+      }
+      html += '</ul>';
+
+      html += '</div>';
+      content.innerHTML = html;
+    }
+
+    function toggleGrades() {
+      const content = document.getElementById("grades-content");
+      const arrow = document.getElementById("grades-arrow");
+      content.classList.toggle("open");
+      arrow.classList.toggle("open");
+    }
+
+    // ---- Previous outputs (collapsible) ----
+    function renderPrevOutputs(run) {
+      const section = document.getElementById("prev-outputs-section");
+      const content = document.getElementById("prev-outputs-content");
+      const prevOutputs = (EMBEDDED_DATA.previous_outputs || {})[run.id];
+
+      if (!prevOutputs || prevOutputs.length === 0) {
+        section.style.display = "none";
+        return;
+      }
+
+      section.style.display = "block";
+      // Reset to collapsed
+      content.classList.remove("open");
+      document.getElementById("prev-outputs-arrow").classList.remove("open");
+
+      // Render the files into the content area
+      content.innerHTML = "";
+      const wrapper = document.createElement("div");
+      wrapper.style.padding = "1rem";
+
+      for (const file of prevOutputs) {
+        const fileDiv = document.createElement("div");
+        fileDiv.className = "output-file";
+
+        const header = document.createElement("div");
+        header.className = "output-file-header";
+        const nameSpan = document.createElement("span");
+        nameSpan.textContent = file.name;
+        header.appendChild(nameSpan);
+        const dlBtn = document.createElement("a");
+        dlBtn.className = "dl-btn";
+        dlBtn.textContent = "Download";
+        dlBtn.download = file.name;
+        dlBtn.href = getDownloadUri(file);
+        header.appendChild(dlBtn);
+        fileDiv.appendChild(header);
+
+        const fc = document.createElement("div");
+        fc.className = "output-file-content";
+
+        if (file.type === "text") {
+          const pre = document.createElement("pre");
+          pre.textContent = file.content;
+          fc.appendChild(pre);
+        } else if (file.type === "image") {
+          const img = document.createElement("img");
+          img.src = file.data_uri;
+          img.alt = file.name;
+          fc.appendChild(img);
+        } else if (file.type === "pdf") {
+          const iframe = document.createElement("iframe");
+          iframe.src = file.data_uri;
+          fc.appendChild(iframe);
+        } else if (file.type === "xlsx") {
+          renderXlsx(fc, file.data_b64);
+        } else if (file.type === "binary") {
+          const a = document.createElement("a");
+          a.className = "download-link";
+          a.href = file.data_uri;
+          a.download = file.name;
+          a.textContent = "Download " + file.name;
+          fc.appendChild(a);
+        }
+
+        fileDiv.appendChild(fc);
+        wrapper.appendChild(fileDiv);
+      }
+
+      content.appendChild(wrapper);
+    }
+
+    function togglePrevOutputs() {
+      const content = document.getElementById("prev-outputs-content");
+      const arrow = document.getElementById("prev-outputs-arrow");
+      content.classList.toggle("open");
+      arrow.classList.toggle("open");
+    }
+
+    // ---- Feedback (saved to server -> feedback.json) ----
+    function saveCurrentFeedback() {
+      const run = EMBEDDED_DATA.runs[currentIndex];
+      const text = document.getElementById("feedback").value;
+
+      if (text.trim() === "") {
+        delete feedbackMap[run.id];
+      } else {
+        feedbackMap[run.id] = text;
+      }
+
+      // Build reviews array from map
+      const reviews = [];
+      for (const [run_id, feedback] of Object.entries(feedbackMap)) {
+        if (feedback.trim()) {
+          reviews.push({ run_id, feedback, timestamp: new Date().toISOString() });
+        }
+      }
+
+      fetch("/api/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reviews, status: "in_progress" }),
+      }).then(() => {
+        document.getElementById("feedback-status").textContent = "Saved";
+      }).catch(() => {
+        // Static mode or server unavailable — no-op on auto-save,
+        // feedback will be downloaded on final submit
+        document.getElementById("feedback-status").textContent = "Will download on submit";
+      });
+    }
+
+    // ---- Done ----
+    function showDoneDialog() {
+      // Save current textarea to feedbackMap (but don't POST yet)
+      const run = EMBEDDED_DATA.runs[currentIndex];
+      const text = document.getElementById("feedback").value;
+      if (text.trim() === "") {
+        delete feedbackMap[run.id];
+      } else {
+        feedbackMap[run.id] = text;
+      }
+
+      // POST once with status: complete — include ALL runs so the model
+      // can distinguish "no feedback" (looks good) from "not reviewed"
+      const reviews = [];
+      const ts = new Date().toISOString();
+      for (const r of EMBEDDED_DATA.runs) {
+        reviews.push({ run_id: r.id, feedback: feedbackMap[r.id] || "", timestamp: ts });
+      }
+      const payload = JSON.stringify({ reviews, status: "complete" }, null, 2);
+      fetch("/api/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: payload,
+      }).then(() => {
+        document.getElementById("done-overlay").classList.add("visible");
+      }).catch(() => {
+        // Server not available (static mode) — download as file
+        const blob = new Blob([payload], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "feedback.json";
+        a.click();
+        URL.revokeObjectURL(url);
+        document.getElementById("done-overlay").classList.add("visible");
+      });
+    }
+
+    function closeDoneDialog() {
+      // Reset status back to in_progress
+      saveCurrentFeedback();
+      document.getElementById("done-overlay").classList.remove("visible");
+    }
+
+    // ---- Toast ----
+    function showToast(message) {
+      const toast = document.getElementById("toast");
+      toast.textContent = message;
+      toast.classList.add("visible");
+      setTimeout(() => toast.classList.remove("visible"), 2000);
+    }
+
+    // ---- Keyboard nav ----
+    document.addEventListener("keydown", (e) => {
+      // Don't capture when typing in textarea
+      if (e.target.tagName === "TEXTAREA") return;
+
+      if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+        e.preventDefault();
+        navigate(-1);
+      } else if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+        e.preventDefault();
+        navigate(1);
+      }
+    });
+
+    // ---- Util ----
+    function getDownloadUri(file) {
+      if (file.data_uri) return file.data_uri;
+      if (file.data_b64) return "data:application/octet-stream;base64," + file.data_b64;
+      if (file.type === "text") return "data:text/plain;charset=utf-8," + encodeURIComponent(file.content);
+      return "#";
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement("div");
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    // ---- View switching ----
+    function switchView(view) {
+      document.querySelectorAll(".view-tab").forEach(t => t.classList.remove("active"));
+      document.querySelectorAll(".view-panel").forEach(p => p.classList.remove("active"));
+      document.querySelector(`[onclick="switchView('${view}')"]`).classList.add("active");
+      document.getElementById("panel-" + view).classList.add("active");
+    }
+
+    // ---- Benchmark rendering ----
+    function renderBenchmark() {
+      const data = EMBEDDED_DATA.benchmark;
+      if (!data) return;
+
+      // Show the tabs
+      document.getElementById("view-tabs").style.display = "flex";
+
+      const container = document.getElementById("benchmark-content");
+      const summary = data.run_summary || {};
+      const metadata = data.metadata || {};
+      const notes = data.notes || [];
+
+      let html = "";
+
+      // Header
+      html += "<h2 style='font-family: Poppins, sans-serif; margin-bottom: 0.5rem;'>Benchmark Results</h2>";
+      html += "<p style='color: var(--text-muted); font-size: 0.875rem; margin-bottom: 1.25rem;'>";
+      if (metadata.skill_name) html += "<strong>" + escapeHtml(metadata.skill_name) + "</strong> &mdash; ";
+      if (metadata.timestamp) html += metadata.timestamp + " &mdash; ";
+      if (metadata.evals_run) html += "Evals: " + metadata.evals_run.join(", ") + " &mdash; ";
+      html += (metadata.runs_per_configuration || "?") + " runs per configuration";
+      html += "</p>";
+
+      // Summary table
+      html += '<table class="benchmark-table">';
+
+      function fmtStat(stat, pct) {
+        if (!stat) return "—";
+        const suffix = pct ? "%" : "";
+        const m = pct ? (stat.mean * 100).toFixed(0) : stat.mean.toFixed(1);
+        const s = pct ? (stat.stddev * 100).toFixed(0) : stat.stddev.toFixed(1);
+        return m + suffix + " ± " + s + suffix;
+      }
+
+      function deltaClass(val) {
+        if (!val) return "";
+        const n = parseFloat(val);
+        if (n > 0) return "benchmark-delta-positive";
+        if (n < 0) return "benchmark-delta-negative";
+        return "";
+      }
+
+      // Discover config names dynamically (everything except "delta")
+      const configs = Object.keys(summary).filter(k => k !== "delta");
+      const configA = configs[0] || "config_a";
+      const configB = configs[1] || "config_b";
+      const labelA = configA.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+      const labelB = configB.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+      const a = summary[configA] || {};
+      const b = summary[configB] || {};
+      const delta = summary.delta || {};
+
+      html += "<thead><tr><th>Metric</th><th>" + escapeHtml(labelA) + "</th><th>" + escapeHtml(labelB) + "</th><th>Delta</th></tr></thead>";
+      html += "<tbody>";
+
+      html += "<tr><td><strong>Pass Rate</strong></td>";
+      html += "<td>" + fmtStat(a.pass_rate, true) + "</td>";
+      html += "<td>" + fmtStat(b.pass_rate, true) + "</td>";
+      html += '<td class="' + deltaClass(delta.pass_rate) + '">' + (delta.pass_rate || "—") + "</td></tr>";
+
+      // Time (only show row if data exists)
+      if (a.time_seconds || b.time_seconds) {
+        html += "<tr><td><strong>Time (s)</strong></td>";
+        html += "<td>" + fmtStat(a.time_seconds, false) + "</td>";
+        html += "<td>" + fmtStat(b.time_seconds, false) + "</td>";
+        html += '<td class="' + deltaClass(delta.time_seconds) + '">' + (delta.time_seconds ? delta.time_seconds + "s" : "—") + "</td></tr>";
+      }
+
+      // Tokens (only show row if data exists)
+      if (a.tokens || b.tokens) {
+        html += "<tr><td><strong>Tokens</strong></td>";
+        html += "<td>" + fmtStat(a.tokens, false) + "</td>";
+        html += "<td>" + fmtStat(b.tokens, false) + "</td>";
+        html += '<td class="' + deltaClass(delta.tokens) + '">' + (delta.tokens || "—") + "</td></tr>";
+      }
+
+      html += "</tbody></table>";
+
+      // Per-eval breakdown (if runs data available)
+      const runs = data.runs || [];
+      if (runs.length > 0) {
+        const evalIds = [...new Set(runs.map(r => r.eval_id))].sort((a, b) => a - b);
+
+        html += "<h3 style='font-family: Poppins, sans-serif; margin-bottom: 0.75rem;'>Per-Eval Breakdown</h3>";
+
+        const hasTime = runs.some(r => r.result && r.result.time_seconds != null);
+        const hasErrors = runs.some(r => r.result && r.result.errors > 0);
+
+        for (const evalId of evalIds) {
+          const evalRuns = runs.filter(r => r.eval_id === evalId);
+          const evalName = evalRuns[0] && evalRuns[0].eval_name ? evalRuns[0].eval_name : "Eval " + evalId;
+
+          html += "<h4 style='font-family: Poppins, sans-serif; margin: 1rem 0 0.5rem; color: var(--text);'>" + escapeHtml(evalName) + "</h4>";
+          html += '<table class="benchmark-table">';
+          html += "<thead><tr><th>Config</th><th>Run</th><th>Pass Rate</th>";
+          if (hasTime) html += "<th>Time (s)</th>";
+          if (hasErrors) html += "<th>Crashes During Execution</th>";
+          html += "</tr></thead>";
+          html += "<tbody>";
+
+          // Group by config and render with average rows
+          const configGroups = [...new Set(evalRuns.map(r => r.configuration))];
+          for (let ci = 0; ci < configGroups.length; ci++) {
+            const config = configGroups[ci];
+            const configRuns = evalRuns.filter(r => r.configuration === config);
+            if (configRuns.length === 0) continue;
+
+            const rowClass = ci === 0 ? "benchmark-row-with" : "benchmark-row-without";
+            const configLabel = config.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+
+            for (const run of configRuns) {
+              const r = run.result || {};
+              const prClass = r.pass_rate >= 0.8 ? "benchmark-delta-positive" : r.pass_rate < 0.5 ? "benchmark-delta-negative" : "";
+              html += '<tr class="' + rowClass + '">';
+              html += "<td>" + configLabel + "</td>";
+              html += "<td>" + run.run_number + "</td>";
+              html += '<td class="' + prClass + '">' + ((r.pass_rate || 0) * 100).toFixed(0) + "% (" + (r.passed || 0) + "/" + (r.total || 0) + ")</td>";
+              if (hasTime) html += "<td>" + (r.time_seconds != null ? r.time_seconds.toFixed(1) : "—") + "</td>";
+              if (hasErrors) html += "<td>" + (r.errors || 0) + "</td>";
+              html += "</tr>";
+            }
+
+            // Average row
+            const rates = configRuns.map(r => (r.result || {}).pass_rate || 0);
+            const avgRate = rates.reduce((a, b) => a + b, 0) / rates.length;
+            const avgPrClass = avgRate >= 0.8 ? "benchmark-delta-positive" : avgRate < 0.5 ? "benchmark-delta-negative" : "";
+            html += '<tr class="benchmark-row-avg ' + rowClass + '">';
+            html += "<td>" + configLabel + "</td>";
+            html += "<td>Avg</td>";
+            html += '<td class="' + avgPrClass + '">' + (avgRate * 100).toFixed(0) + "%</td>";
+            if (hasTime) {
+              const times = configRuns.map(r => (r.result || {}).time_seconds).filter(t => t != null);
+              html += "<td>" + (times.length ? (times.reduce((a, b) => a + b, 0) / times.length).toFixed(1) : "—") + "</td>";
+            }
+            if (hasErrors) html += "<td></td>";
+            html += "</tr>";
+          }
+          html += "</tbody></table>";
+
+          // Per-assertion detail for this eval
+          const runsWithExpectations = {};
+          for (const config of configGroups) {
+            runsWithExpectations[config] = evalRuns.filter(r => r.configuration === config && r.expectations && r.expectations.length > 0);
+          }
+          const hasAnyExpectations = Object.values(runsWithExpectations).some(runs => runs.length > 0);
+          if (hasAnyExpectations) {
+            // Collect all unique assertion texts across all configs
+            const allAssertions = [];
+            const seen = new Set();
+            for (const config of configGroups) {
+              for (const run of runsWithExpectations[config]) {
+                for (const exp of (run.expectations || [])) {
+                  if (!seen.has(exp.text)) {
+                    seen.add(exp.text);
+                    allAssertions.push(exp.text);
+                  }
+                }
+              }
+            }
+
+            html += '<table class="benchmark-table" style="margin-top: 0.5rem;">';
+            html += "<thead><tr><th>Assertion</th>";
+            for (const config of configGroups) {
+              const label = config.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+              html += "<th>" + escapeHtml(label) + "</th>";
+            }
+            html += "</tr></thead><tbody>";
+
+            for (const assertionText of allAssertions) {
+              html += "<tr><td>" + escapeHtml(assertionText) + "</td>";
+
+              for (const config of configGroups) {
+                html += "<td>";
+                for (const run of runsWithExpectations[config]) {
+                  const exp = (run.expectations || []).find(e => e.text === assertionText);
+                  if (exp) {
+                    const cls = exp.passed ? "benchmark-delta-positive" : "benchmark-delta-negative";
+                    const icon = exp.passed ? "\u2713" : "\u2717";
+                    html += '<span class="' + cls + '" title="Run ' + run.run_number + ': ' + escapeHtml(exp.evidence || "") + '">' + icon + "</span> ";
+                  } else {
+                    html += "— ";
+                  }
+                }
+                html += "</td>";
+              }
+              html += "</tr>";
+            }
+            html += "</tbody></table>";
+          }
+        }
+      }
+
+      // Notes
+      if (notes.length > 0) {
+        html += '<div class="benchmark-notes">';
+        html += "<h3>Analysis Notes</h3>";
+        html += "<ul>";
+        for (const note of notes) {
+          html += "<li>" + escapeHtml(note) + "</li>";
+        }
+        html += "</ul></div>";
+      }
+
+      container.innerHTML = html;
+    }
+
+    // ---- Start ----
+    init();
+    renderBenchmark();
+  </script>
+</body>
+</html>

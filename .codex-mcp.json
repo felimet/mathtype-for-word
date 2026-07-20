@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "mathtype-for-word": {
+      "command": "pwsh.exe",
+      "args": [
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${PLUGIN_ROOT}/scripts/run-mcp.ps1"
+      ]
+    }
+  }
+}

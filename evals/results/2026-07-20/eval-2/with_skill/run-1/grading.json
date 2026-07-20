@@ -1,0 +1,80 @@
+{
+  "expectations": [
+    {
+      "text": "Distinguishes two numbered display equations from one unnumbered inline equation.",
+      "passed": true,
+      "evidence": "The answer maps state and output to display/numbered true and noise to inline/numbered false."
+    },
+    {
+      "text": "Uses unique stable IDs and requires each marker exactly once.",
+      "passed": true,
+      "evidence": "The response uses the stable IDs state, output, and noise, maps both reference targets, and requires all five markers to occur exactly once."
+    },
+    {
+      "text": "Introduces each display in preceding prose and follows it with a Traditional Chinese 其中， paragraph defining symbols, indices, units, and meanings.",
+      "passed": true,
+      "evidence": "Step 4 requires each display to be its own paragraph, a preceding lead sentence, and a following paragraph starting ‘其中，’ that defines symbols, indices, subscripts/superscripts, units, dimensions, and physical or statistical meanings."
+    },
+    {
+      "text": "Requires three Equation.DSMT4 objects; sequential MTPlaceRef/SEQ MTEqn numbers (1) and (2); and two GOTOBUTTON/nested REF references backed by live ZEqnNum bookmarks.",
+      "passed": true,
+      "evidence": "Step 6 explicitly requires three Equation.DSMT4 objects. Step 5 requires (1)/(2) via MTPlaceRef and SEQ MTEqn and two GOTOBUTTON references containing nested REF fields that point to valid ZEqnNum bookmarks."
+    },
+    {
+      "text": "Calls for visual inspection of complex typography in addition to structural validation.",
+      "passed": true,
+      "evidence": "Step 6 requires manifest-aware structural validation and Step 7 separately requires visual inspection of fractions, matrices, subscripts/superscripts, symbol ranges, alignment, and overflow."
+    }
+  ],
+  "summary": {
+    "passed": 5,
+    "failed": 0,
+    "total": 5,
+    "pass_rate": 1.0
+  },
+  "execution_metrics": {
+    "tool_calls": {},
+    "total_tool_calls": 0,
+    "total_steps": 7,
+    "errors_encountered": 0,
+    "output_chars": 1110,
+    "transcript_chars": 1989,
+    "scope": "情境執行；評測器讀取 skill 與 references 的共享檔案呼叫不計入。"
+  },
+  "timing": {
+    "executor_duration_seconds": 3.8,
+    "grader_duration_seconds": 0.0,
+    "total_duration_seconds": 3.8,
+    "simulated": true,
+    "note": "情境評測估計時間；缺少來源、公式與單位，未啟動外部工具。Grading was batched, so a per-run grader duration is unavailable."
+  },
+  "claims": [
+    {
+      "claim": "No document was produced because the source, equation content, semantics, and units were absent.",
+      "type": "process",
+      "verified": true,
+      "evidence": "The answer explicitly disclaims completion and metrics report zero tool calls."
+    },
+    {
+      "claim": "The plan distinguishes all three equation roles and both reference targets.",
+      "type": "factual",
+      "verified": true,
+      "evidence": "The answer explicitly maps state/output as numbered display, noise as unnumbered inline, and each EQREF marker to its corresponding stable ID."
+    },
+    {
+      "claim": "The plan includes both structural and visual validation.",
+      "type": "quality",
+      "verified": true,
+      "evidence": "Separate numbered steps define manifest-aware structural checks and a manual typography/layout inspection."
+    }
+  ],
+  "user_notes_summary": {
+    "uncertainties": [],
+    "needs_review": [],
+    "workarounds": []
+  },
+  "eval_feedback": {
+    "suggestions": [],
+    "overall": "The updated native-structure assertion is supported by explicit Equation.DSMT4, MTPlaceRef/SEQ MTEqn, GOTOBUTTON/nested REF, and ZEqnNum evidence in this response."
+  }
+}

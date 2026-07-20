@@ -1,0 +1,490 @@
+{
+  "metadata": {
+    "skill_name": "mathtype-for-word",
+    "skill_path": "<path/to/skill>",
+    "executor_model": "not recorded",
+    "analyzer_model": "independent evidence grader",
+    "timestamp": "2026-07-20T07:46:20Z",
+    "evals_run": [
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "runs_per_configuration": 1
+  },
+  "runs": [
+    {
+      "eval_id": 1,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 5,
+        "failed": 0,
+        "total": 5,
+        "time_seconds": 0,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Produces and returns a real DOCX output file rather than a plan or an explanation that an input file is missing.",
+          "passed": true,
+          "evidence": "PASS: zh-paper-final.docx is a 76,625-byte ZIP/OOXML package (SHA-256 A263A287563817F182FC4A49190A459561548E9C6395DEB5E9C648CC1550D63A); the package contains word/document.xml and two embedded OLE binaries. The source fixture remains at a distinct path."
+        },
+        {
+          "text": "Preserves the source and creates exactly two numbered display Equation.DSMT4 objects with native MathType numbers 1 and 2.",
+          "passed": true,
+          "evidence": "PASS: Independent OOXML inspection found exactly 2 o:OLEObject elements with ProgID Equation.DSMT4, 0 Word oMath nodes, two MTDisplayEquation paragraphs, two MTPlaceRef fields, and native displayed values 1 and 2. styles.xml defines MTDisplayEquation with a center tab at 4160 and a right tab at 8300."
+        },
+        {
+          "text": "Creates exactly two MathType-native dynamic references backed by live ZEqnNum bookmarks and GOTOBUTTON/REF fields.",
+          "passed": true,
+          "evidence": "PASS: word/document.xml contains exactly 2 GOTOBUTTON fields and 2 nested REF ZEqnNum fields linked to live bookmark pairs ZEqnNum678385 and ZEqnNum167174."
+        },
+        {
+          "text": "Keeps the equations in centered standalone paragraphs and preserves the Traditional Chinese lead-in and \u5176\u4e2d\uff0c symbol-definition paragraphs.",
+          "passed": true,
+          "evidence": "PASS: OOXML preserves both Traditional Chinese lead-ins and two paragraphs beginning with \u5176\u4e2d\uff0c. The 993x1404 rendered page visibly shows both equations centered on standalone lines with numbers at the right and the required prose before and after."
+        },
+        {
+          "text": "Runs manifest-aware validation and reports zero unresolved markers and zero structural errors.",
+          "passed": true,
+          "evidence": "PASS: validation.json has ok=true, errors=[], warnings=[], counts 2/0/2/2, numbers [1,2], and the package contains no {{...}} markers. A fresh validator run independently returned exit code 0 with the same result."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 2,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 5,
+        "failed": 0,
+        "total": 5,
+        "time_seconds": 0,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Produces and returns a real DOCX output file from the attached English fixture.",
+          "passed": true,
+          "evidence": "PASS: en-paper-final.docx is a 2,436,489-byte ZIP/OOXML package (SHA-256 7A8CE588905EB045D09FCF14415E023D8EE816E258AAB66A4694A40A132F75B7) with three embedded OLE binaries."
+        },
+        {
+          "text": "Creates exactly three Equation.DSMT4 objects: two numbered displays and one unnumbered inline equation.",
+          "passed": true,
+          "evidence": "PASS: Independent OOXML inspection found exactly 3 Equation.DSMT4 objects and 0 Word oMath nodes: two objects in MTDisplayEquation numbered paragraphs and one inline object in the measurement-noise sentence."
+        },
+        {
+          "text": "Creates exactly two MathType-native dynamic references and sequential native numbers 1 and 2.",
+          "passed": true,
+          "evidence": "PASS: OOXML contains 2 MTPlaceRef fields, native values [1,2], exactly 2 GOTOBUTTON/REF field pairs, and live bookmarks ZEqnNum914825 and ZEqnNum521057."
+        },
+        {
+          "text": "Preserves English academic lead-ins and where paragraphs without leaving any variable used in the body undefined.",
+          "passed": true,
+          "evidence": "PASS: The OOXML and 993x1404 rendered page preserve the two academic lead-ins, Equation (1), Eq. (2), both where paragraphs, and the inline variance definition. The text defines x_k/A/B/u_k/w_k/k and y_k/C/v_k plus the variance unit; no displayed symbol is omitted."
+        },
+        {
+          "text": "Runs manifest-aware validation and reports zero unresolved markers and zero structural errors.",
+          "passed": true,
+          "evidence": "PASS: validation.json reports ok=true with errors=[] and warnings=[]; document.xml has no unresolved {{...}} markers. A fresh validator run returned exit code 0 with counts 3/0/2/2."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 3,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 5,
+        "failed": 0,
+        "total": 5,
+        "time_seconds": 0,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Produces and returns a real PPTX output file rather than a plan.",
+          "passed": true,
+          "evidence": "PASS: zh-presentation-final.pptx is a 38,667-byte ZIP/OOXML package (SHA-256 386C08515D2756731379D23D7EA9F99E3E4FB6545920858375B7BA122F90A988) with ppt/slides/slide1.xml and ppt/embeddings/oleObject1.bin."
+        },
+        {
+          "text": "Creates a genuine Equation.DSMT4 floating OLE object directly in PowerPoint without starting Word.",
+          "passed": true,
+          "evidence": "PASS: slide1.xml declares ProgID Equation.DSMT4 and the slide relationship targets ../embeddings/oleObject1.bin. process-check.json records baseline WINWORD PID 81440, observed_new_winword_pids=[], 50 ms sampling, and bridge_exit_code=0."
+        },
+        {
+          "text": "Horizontally centers the equation and removes the complete marker text box.",
+          "passed": true,
+          "evidence": "PASS: The OLE frame MathType_sensible_heat has center x=6096000 EMU on a 12192000-EMU slide, an exact 0-EMU offset. slide1.xml contains no {{ marker, and the 1280x720 PNG visibly shows a centered formula."
+        },
+        {
+          "text": "Preserves the Traditional Chinese lead-in and \u5176\u4e2d\uff0c symbol-definition text.",
+          "passed": true,
+          "evidence": "PASS: slide text preserves \u7269\u9ad4\u5438\u6536\u4e4b\u986f\u71b1\u53ef\u8868\u793a\u5982\u4e0b\uff1a and the full \u5176\u4e2d\uff0c paragraph defining Q, m, c_p, \u0394T and their units; the PNG confirms readable non-overlapping placement."
+        },
+        {
+          "text": "Validation reports one MathType object, one verified MathML payload, no unresolved markers, and no errors.",
+          "passed": true,
+          "evidence": "PASS: validation.json reports mathtype_objects=1, mathml_verified=1, unresolved_markers=[], errors=[]. A fresh COM-based validate-pptx run again returned exit code 0 and verified the manifest MathML signature."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 4,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 5,
+        "failed": 0,
+        "total": 5,
+        "time_seconds": 0,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Produces and returns a real PPTX output file from the attached English fixture.",
+          "passed": true,
+          "evidence": "PASS: en-presentation-final.pptx is a 40,646-byte ZIP/OOXML package (SHA-256 00BBDE6E54D22DC20E1A77E4B3E0173888C8FDE7DDA3140BABCE53F1EEF15609) with slide1.xml and an embedded OLE binary."
+        },
+        {
+          "text": "Uses PowerPoint and MathType directly and creates no new WINWORD process.",
+          "passed": true,
+          "evidence": "PASS: process-check.json records no new WINWORD PID during the direct PowerPoint bridge run (baseline [81440], observed_new_winword_pids=[], bridge_exit_code=0)."
+        },
+        {
+          "text": "Creates one centered Equation.DSMT4 object whose embedded MathML matches the manifest.",
+          "passed": true,
+          "evidence": "PASS: slide1.xml contains one logical Equation.DSMT4 relationship named MathType_root_mean_square_error. Its center is 6095999.5 EMU versus slide center 6096000 EMU (0.5-EMU difference), and a fresh COM validator verified the embedded MathML against the manifest."
+        },
+        {
+          "text": "Preserves the English lead-in and where symbol-definition paragraph.",
+          "passed": true,
+          "evidence": "PASS: OOXML preserves \u201cThe root-mean-square error is defined as follows:\u201d and a paragraph beginning with \u201cwhere\u201d; the 1280x720 PNG shows the centered equation and readable, non-overlapping prose."
+        },
+        {
+          "text": "Reports no unresolved markers and no validation errors.",
+          "passed": true,
+          "evidence": "PASS: validation.json and a fresh validate-pptx run report ok=true, one object, one verified MathML payload, no unresolved markers, and errors=[]."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 5,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 4,
+        "failed": 0,
+        "total": 4,
+        "time_seconds": 0,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Calls or explicitly requires probe_mathtype_word and reports the exact failed named check before choosing any fallback.",
+          "passed": true,
+          "evidence": "PASS: The response explicitly states that probe ran first, names word_com, mathtype_executable, mathtype_word_template, mathtype_template_loaded, and equation_dsmt4_registered, and reports word_ready=true. It also states that any future named failure will be reported before stopping."
+        },
+        {
+          "text": "Does not silently use Word OMath, Caption, numbered lists, or typed references.",
+          "passed": true,
+          "evidence": "PASS: The response explicitly refuses silent substitution with Word OMath, Caption, numbered lists, images, or typed references."
+        },
+        {
+          "text": "Explains that the fallback is not MathType-native and requires explicit user acceptance.",
+          "passed": true,
+          "evidence": "PASS: It states that OMath or Caption is not MathType-native and requires explicit user acceptance of the fidelity loss."
+        },
+        {
+          "text": "Keeps the original document unchanged while blocked or awaiting fallback authorization.",
+          "passed": true,
+          "evidence": "PASS: It states that a failed prerequisite causes the original DOCX to be preserved and processing to stop. This text-only eval supplied no document, and the outputs contain only the response."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 1,
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 5,
+        "failed": 0,
+        "total": 5,
+        "time_seconds": 0,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Produces and returns a real DOCX output file rather than a plan or an explanation that an input file is missing.",
+          "passed": true,
+          "evidence": "PASS: zh-paper-final.docx is a 76,527-byte ZIP/OOXML package (SHA-256 37B0B024EC29B34EF848ACCFB796BE34575579DFA14A3010FC9C59D780363473); it contains word/document.xml and two embedded OLE binaries."
+        },
+        {
+          "text": "Preserves the source and creates exactly two numbered display Equation.DSMT4 objects with native MathType numbers 1 and 2.",
+          "passed": true,
+          "evidence": "PASS: Independent OOXML inspection found exactly 2 Equation.DSMT4 OLE objects, 0 Word oMath nodes, two MTDisplayEquation paragraphs, two MTPlaceRef fields, and native values 1 and 2. The MathType display style uses center and right tab stops."
+        },
+        {
+          "text": "Creates exactly two MathType-native dynamic references backed by live ZEqnNum bookmarks and GOTOBUTTON/REF fields.",
+          "passed": true,
+          "evidence": "PASS: word/document.xml contains exactly 2 GOTOBUTTON fields and 2 REF ZEqnNum fields linked to live bookmark pairs ZEqnNum290911 and ZEqnNum862636."
+        },
+        {
+          "text": "Keeps the equations in centered standalone paragraphs and preserves the Traditional Chinese lead-in and \u5176\u4e2d\uff0c symbol-definition paragraphs.",
+          "passed": true,
+          "evidence": "PASS: OOXML preserves both Traditional Chinese lead-ins and both \u5176\u4e2d\uff0c definition paragraphs; each numbered OLE is isolated in an MTDisplayEquation paragraph that centers the equation and right-aligns its number."
+        },
+        {
+          "text": "Runs manifest-aware validation and reports zero unresolved markers and zero structural errors.",
+          "passed": true,
+          "evidence": "PASS: validation.json has ok=true, errors=[], warnings=[], counts 2/0/2/2, numbers [1,2], and no marker remains in document.xml. A fresh validator run returned exit code 0."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 2,
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 5,
+        "failed": 0,
+        "total": 5,
+        "time_seconds": 0,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Produces and returns a real DOCX output file from the attached English fixture.",
+          "passed": true,
+          "evidence": "PASS: en-paper-final.docx is a 2,436,472-byte ZIP/OOXML package (SHA-256 17672F720DAE702C49969C57383D7ECFA901F876E72BEEB1CC412143D6FEE0C1) with three embedded OLE binaries."
+        },
+        {
+          "text": "Creates exactly three Equation.DSMT4 objects: two numbered displays and one unnumbered inline equation.",
+          "passed": true,
+          "evidence": "PASS: Independent OOXML inspection found exactly 3 Equation.DSMT4 objects and 0 Word oMath nodes: two numbered displays and one inline object."
+        },
+        {
+          "text": "Creates exactly two MathType-native dynamic references and sequential native numbers 1 and 2.",
+          "passed": true,
+          "evidence": "PASS: OOXML contains 2 MTPlaceRef fields, values [1,2], 2 GOTOBUTTON/REF pairs, and live bookmarks ZEqnNum915910 and ZEqnNum467554."
+        },
+        {
+          "text": "Preserves English academic lead-ins and where paragraphs without leaving any variable used in the body undefined.",
+          "passed": true,
+          "evidence": "PASS: OOXML preserves the academic English lead-ins, Equation/Eq. references, both where definition paragraphs, and the inline variance sentence. The displayed and inline formula symbols are covered by the definitions."
+        },
+        {
+          "text": "Runs manifest-aware validation and reports zero unresolved markers and zero structural errors.",
+          "passed": true,
+          "evidence": "PASS: validation.json reports ok=true, errors=[], warnings=[], counts 3/0/2/2, and no unresolved marker remains. A fresh validator run returned exit code 0."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 3,
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.0,
+        "passed": 0,
+        "failed": 5,
+        "total": 5,
+        "time_seconds": 0,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Produces and returns a real PPTX output file rather than a plan.",
+          "passed": false,
+          "evidence": "FAIL: No zh-presentation-final.pptx exists in outputs; the only executor output is a text response."
+        },
+        {
+          "text": "Creates a genuine Equation.DSMT4 floating OLE object directly in PowerPoint without starting Word.",
+          "passed": false,
+          "evidence": "FAIL: No PPTX, Equation.DSMT4 OLE object, PowerPoint process evidence, or process-check.json was produced. The response correctly avoids Word but does not create the required object."
+        },
+        {
+          "text": "Horizontally centers the equation and removes the complete marker text box.",
+          "passed": false,
+          "evidence": "FAIL: No slide artifact exists in which centering or marker removal can be verified."
+        },
+        {
+          "text": "Preserves the Traditional Chinese lead-in and \u5176\u4e2d\uff0c symbol-definition text.",
+          "passed": false,
+          "evidence": "FAIL: The response discusses the unsupported workflow but no presentation preserves the requested Traditional Chinese prose."
+        },
+        {
+          "text": "Validation reports one MathType object, one verified MathML payload, no unresolved markers, and no errors.",
+          "passed": false,
+          "evidence": "FAIL: No validation.json exists, so object count, MathML readback, marker status, and errors cannot be verified."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 4,
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.0,
+        "passed": 0,
+        "failed": 5,
+        "total": 5,
+        "time_seconds": 0,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Produces and returns a real PPTX output file from the attached English fixture.",
+          "passed": false,
+          "evidence": "FAIL: No en-presentation-final.pptx exists in outputs; only a text response was produced."
+        },
+        {
+          "text": "Uses PowerPoint and MathType directly and creates no new WINWORD process.",
+          "passed": false,
+          "evidence": "FAIL: No process-check.json or PowerPoint artifact exists, so the required direct PowerPoint execution and no-new-WINWORD condition were not completed."
+        },
+        {
+          "text": "Creates one centered Equation.DSMT4 object whose embedded MathML matches the manifest.",
+          "passed": false,
+          "evidence": "FAIL: No Equation.DSMT4 OLE object or embedded MathML exists to inspect."
+        },
+        {
+          "text": "Preserves the English lead-in and where symbol-definition paragraph.",
+          "passed": false,
+          "evidence": "FAIL: No presentation artifact preserves the English lead-in or where paragraph."
+        },
+        {
+          "text": "Reports no unresolved markers and no validation errors.",
+          "passed": false,
+          "evidence": "FAIL: No validation.json exists; unresolved markers and validation errors cannot be evaluated."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 5,
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 4,
+        "failed": 0,
+        "total": 4,
+        "time_seconds": 0,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Calls or explicitly requires probe_mathtype_word and reports the exact failed named check before choosing any fallback.",
+          "passed": true,
+          "evidence": "PASS: The response says an equivalent probe_mathtype_word check was executed, reports ok=true, and names mathtype_executable, equation_dsmt4_registered, word_com, mathtype_word_template, and mathtype_template_loaded."
+        },
+        {
+          "text": "Does not silently use Word OMath, Caption, numbered lists, or typed references.",
+          "passed": true,
+          "evidence": "PASS: The response explicitly refuses silent use of Word OMath, Caption, numbered lists, and manually typed references."
+        },
+        {
+          "text": "Explains that the fallback is not MathType-native and requires explicit user acceptance.",
+          "passed": true,
+          "evidence": "PASS: It explains that such output is not MathType-native and permits fallback only after a named failed check is reported and explicit approval is received."
+        },
+        {
+          "text": "Keeps the original document unchanged while blocked or awaiting fallback authorization.",
+          "passed": true,
+          "evidence": "PASS: It states no source DOCX was provided and no file was modified; the output directory contains only the response."
+        }
+      ],
+      "notes": []
+    }
+  ],
+  "run_summary": {
+    "with_skill": {
+      "pass_rate": {
+        "mean": 1.0,
+        "stddev": 0.0,
+        "min": 1.0,
+        "max": 1.0
+      },
+      "time_seconds": {
+        "mean": 0.0,
+        "stddev": 0.0,
+        "min": 0,
+        "max": 0
+      },
+      "tokens": {
+        "mean": 0.0,
+        "stddev": 0.0,
+        "min": 0,
+        "max": 0
+      }
+    },
+    "without_skill": {
+      "pass_rate": {
+        "mean": 0.6,
+        "stddev": 0.5477,
+        "min": 0.0,
+        "max": 1.0
+      },
+      "time_seconds": {
+        "mean": 0.0,
+        "stddev": 0.0,
+        "min": 0,
+        "max": 0
+      },
+      "tokens": {
+        "mean": 0.0,
+        "stddev": 0.0,
+        "min": 0,
+        "max": 0
+      }
+    },
+    "delta": {
+      "pass_rate": "+0.40",
+      "time_seconds": "+0.0",
+      "tokens": "+0"
+    }
+  },
+  "notes": [
+    "One real artifact-producing run was executed per eval and configuration.",
+    "Executor timing, token usage, and tool-call counts were not recorded; zero values are placeholders and are not performance measurements."
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "equations": [
+    {
+      "id": "cumulative_deflection",
+      "marker": "{{MATH:cumulative_deflection}}",
+      "tex": "\\theta_y = \\sum_{i=1}^{N} \\Delta \\theta_{y,i}",
+      "layout": "display",
+      "numbered": true
+    },
+    {
+      "id": "normalized_deflection",
+      "marker": "{{MATH:normalized_deflection}}",
+      "tex": "\\eta_y = \\frac{\\theta_y}{N}",
+      "layout": "display",
+      "numbered": true
+    }
+  ],
+  "references": [
+    {
+      "marker": "{{EQREF:cumulative_deflection}}",
+      "target": "cumulative_deflection"
+    },
+    {
+      "marker": "{{EQREF:normalized_deflection}}",
+      "target": "normalized_deflection"
+    }
+  ]
+}

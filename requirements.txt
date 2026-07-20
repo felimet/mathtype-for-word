@@ -1,0 +1,2 @@
+# Runtime uses only the Python standard library and PowerShell 7+ (pwsh.exe).
+# Microsoft Word, PowerPoint, and MathType 7 are external desktop prerequisites.

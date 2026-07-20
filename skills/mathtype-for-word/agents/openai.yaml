@@ -1,0 +1,6 @@
+interface:
+  display_name: "MathType for Word and PowerPoint"
+  short_description: "Create native MathType equations in DOCX and PPTX"
+  default_prompt: "Use $mathtype-for-word to create or repair genuine MathType equations in this Word or PowerPoint file, preserve native Word numbering and references when applicable, then validate the result."
+policy:
+  allow_implicit_invocation: true

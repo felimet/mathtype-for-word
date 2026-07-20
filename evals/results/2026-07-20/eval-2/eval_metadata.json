@@ -1,0 +1,6 @@
+{
+  "eval_id": 2,
+  "name": "academic-mixed-equations",
+  "prompt_source": "evals/evals.json",
+  "run_type": "simulated because the referenced user DOCX is not part of the fixture"
+}

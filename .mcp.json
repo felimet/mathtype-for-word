@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "mathtype-for-word": {
+      "command": "pwsh.exe",
+      "args": [
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "$pluginRoot = $env:CLAUDE_PLUGIN_ROOT; if ([string]::IsNullOrWhiteSpace($pluginRoot)) { $pluginRoot = $env:PLUGIN_ROOT }; if ([string]::IsNullOrWhiteSpace($pluginRoot)) { $pluginRoot = (Get-Location).Path }; & (Join-Path $pluginRoot 'scripts\\run-mcp.ps1')"
+      ]
+    }
+  }
+}

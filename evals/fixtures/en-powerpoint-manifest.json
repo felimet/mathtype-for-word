@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "equations": [
+    {
+      "id": "root_mean_square_error",
+      "marker": "{{MATH:root_mean_square_error}}",
+      "mathml": "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><mrow><mi mathvariant=\"normal\">RMSE</mi><mo>=</mo><msqrt><mrow><mfrac><mn>1</mn><mi>N</mi></mfrac><munderover><mo>&#x2211;</mo><mrow><mi>i</mi><mo>=</mo><mn>1</mn></mrow><mi>N</mi></munderover><msup><mrow><mo>(</mo><msub><mi>y</mi><mi>i</mi></msub><mo>&#x2212;</mo><msub><mover accent=\"true\"><mi>y</mi><mo>^</mo></mover><mi>i</mi></msub><mo>)</mo></mrow><mn>2</mn></msup></mrow></msqrt></mrow></math>",
+      "height_points": 36
+    }
+  ]
+}

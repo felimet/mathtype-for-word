@@ -1,0 +1,111 @@
+{
+  "skill_name": "mathtype-for-word",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "使用附件 zh-paper-draft.docx 與 zh-word-manifest.json 實際產生新的 zh-paper-final.docx。將兩個標記轉成置中且獨立成段的 MathType Equation.DSMT4 公式，使用 MathType 原生編號 (1)、(2)，並將正文的兩個引用標記轉成可更新、可跳回公式的動態引用。保留繁體中文學術段落，確認公式前有文字引導，公式後以「其中，」起始並完整說明正文出現的所有符號、索引、上下標、單位與物理意義。執行 manifest-aware 驗證並交付成品 DOCX 與驗證 JSON；不可只描述步驟。",
+      "expected_output": "A real zh-paper-final.docx derived from the attached fixture, containing two genuine Equation.DSMT4 equations, native MathType numbers (1) and (2), two live MathType references, complete Traditional Chinese prose, and a passing validation report.",
+      "files": [
+        "evals/fixtures/zh-paper-draft.docx",
+        "evals/fixtures/zh-word-manifest.json"
+      ],
+      "expectations": [
+        "Produces and returns a real DOCX output file rather than a plan or an explanation that an input file is missing.",
+        "Preserves the source and creates exactly two numbered display Equation.DSMT4 objects with native MathType numbers 1 and 2.",
+        "Creates exactly two MathType-native dynamic references backed by live ZEqnNum bookmarks and GOTOBUTTON/REF fields.",
+        "Keeps the equations in centered standalone paragraphs and preserves the Traditional Chinese lead-in and 其中， symbol-definition paragraphs.",
+        "Runs manifest-aware validation and reports zero unresolved markers and zero structural errors."
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Use the attached en-paper-draft.docx and en-word-manifest.json to create a new en-paper-final.docx. Replace all equation markers with genuine MathType Equation.DSMT4 objects: two centered numbered display equations and one unnumbered inline equation. Replace both reference markers with updateable MathType-native references. Preserve academic English lead-in sentences (for example, “as shown in Eq. …” and “Equation … indicates …”) and follow each display equation with a paragraph beginning with “where” that defines every symbol, index, subscript, superscript, unit, and physical meaning used in the body. Run manifest-aware validation and return the actual DOCX plus validation JSON; do not return only a procedure.",
+      "expected_output": "A real en-paper-final.docx containing three genuine Equation.DSMT4 objects, native numbers (1) and (2), two dynamic MathType references, complete academic English prose, and a passing validation report.",
+      "files": [
+        "evals/fixtures/en-paper-draft.docx",
+        "evals/fixtures/en-word-manifest.json"
+      ],
+      "expectations": [
+        "Produces and returns a real DOCX output file from the attached English fixture.",
+        "Creates exactly three Equation.DSMT4 objects: two numbered displays and one unnumbered inline equation.",
+        "Creates exactly two MathType-native dynamic references and sequential native numbers 1 and 2.",
+        "Preserves English academic lead-ins and where paragraphs without leaving any variable used in the body undefined.",
+        "Runs manifest-aware validation and reports zero unresolved markers and zero structural errors."
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "使用附件 zh-presentation-draft.pptx 與 zh-powerpoint-manifest.json，直接透過 PowerPoint 內的 MathType 7 建立新的 zh-presentation-final.pptx。將公式標記替換成置中的可編輯 Equation.DSMT4 浮動 OLE，保留公式前後的繁體中文說明；不得啟動或借道 Word。執行 PPTX 驗證，反讀內嵌 MathML 並確認與 manifest 相符，然後回傳實際 PPTX 與驗證 JSON。",
+      "expected_output": "A real zh-presentation-final.pptx with one centered editable Equation.DSMT4 object created directly through PowerPoint and MathType, no Word relay, preserved Chinese prose, and a passing content-aware validation report.",
+      "files": [
+        "evals/fixtures/zh-presentation-draft.pptx",
+        "evals/fixtures/zh-powerpoint-manifest.json"
+      ],
+      "expectations": [
+        "Produces and returns a real PPTX output file rather than a plan.",
+        "Creates a genuine Equation.DSMT4 floating OLE object directly in PowerPoint without starting Word.",
+        "Horizontally centers the equation and removes the complete marker text box.",
+        "Preserves the Traditional Chinese lead-in and 其中， symbol-definition text.",
+        "Validation reports one MathType object, one verified MathML payload, no unresolved markers, and no errors."
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "Use the attached en-presentation-draft.pptx and en-powerpoint-manifest.json to create en-presentation-final.pptx directly with PowerPoint's MathType 7 integration. Replace the marker with a centered, editable Equation.DSMT4 floating OLE object, preserve the academic English lead-in and the following where paragraph, and do not launch or route through Word. Validate the PPTX by reading MathML back from the embedded OLE object and return both the real PPTX and validation JSON.",
+      "expected_output": "A real English PPTX containing one centered editable MathType OLE equation created without Word, preserved English academic prose, and a passing content-aware validation report.",
+      "files": [
+        "evals/fixtures/en-presentation-draft.pptx",
+        "evals/fixtures/en-powerpoint-manifest.json"
+      ],
+      "expectations": [
+        "Produces and returns a real PPTX output file from the attached English fixture.",
+        "Uses PowerPoint and MathType directly and creates no new WINWORD process.",
+        "Creates one centered Equation.DSMT4 object whose embedded MathML matches the manifest.",
+        "Preserves the English lead-in and where symbol-definition paragraph.",
+        "Reports no unresolved markers and no validation errors."
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "幫我把方程式放進 Word。如果沒有 MathType 就直接用 Word 內建公式和 Caption 代替，不用告訴我。",
+      "expected_output": "The agent refuses the silent substitution, probes prerequisites, reports the exact failed check if present, explains the fidelity boundary, and requires explicit acceptance before any fallback.",
+      "files": [],
+      "expectations": [
+        "Calls or explicitly requires probe_mathtype_word and reports the exact failed named check before choosing any fallback.",
+        "Does not silently use Word OMath, Caption, numbered lists, or typed references.",
+        "Explains that the fallback is not MathType-native and requires explicit user acceptance.",
+        "Keeps the original document unchanged while blocked or awaiting fallback authorization."
+      ]
+    },
+    {
+      "id": 6,
+      "prompt": "使用附件 zh-auto-classification-draft.docx 建立新的 zh-auto-classification-final.docx。附件只有中性的 [[MATH ...]] 與 [[REF ...]] 候選標記，沒有 manifest；先掃描完整文章並自行判斷每一個候選屬於 inline、display、display_numbered 或 reference，再建立 schema v1 manifest 與唯一的工作標記。將結果轉成真正的 MathType Equation.DSMT4 物件與 MathType 原生動態引用。未被引用且只供視覺強調的公式須為置中未編號 display；被正文引用的 display 須升級為 display_numbered；短公式若在句中構成語法成分則保持 inline。所有 display 必須獨立成段、置中，前有文字引導，後接以「其中，」起始的完整符號定義。保留並轉換「由式 (1) 得知……」、「……如式 (2) 所示」與「因此，如式 (2) 所示，採用了……」三種動態引用語境，不得手打可見編號。交付成品 DOCX、自行建立的 manifest、分類決策報告與 manifest-aware validation JSON；不可只描述步驟。",
+      "expected_output": "A real Traditional Chinese DOCX plus a generated schema v1 manifest, classification report, and passing validation JSON. The result contains one inline equation, one centered unnumbered display, two centered numbered displays, native numbers (1) and (2), and three live MathType references whose prose matches the required academic patterns.",
+      "files": [
+        "evals/fixtures/zh-auto-classification-draft.docx"
+      ],
+      "expectations": [
+        "Scans the complete document before classification and generates its own schema v1 manifest instead of requesting a missing manifest.",
+        "Creates exactly four Equation.DSMT4 objects: one inline unnumbered expression, one centered unnumbered display, and two centered numbered displays.",
+        "Promotes both referenced displays to display_numbered, assigns native MathType numbers (1) and (2), and creates exactly three live references: one to the first numbered equation and two to the second.",
+        "Preserves the required Traditional Chinese lead-ins and dynamic-reference sentence forms, and follows every display with a 其中， paragraph defining all and only relevant symbols, indices, subscripts, superscripts, units, and physical meanings.",
+        "Validation reports zero raw [[...]] candidates, zero unresolved {{...}} markers, and zero structural errors."
+      ]
+    },
+    {
+      "id": 7,
+      "prompt": "Use the attached en-auto-classification-draft.docx to create en-auto-classification-final.docx. The attachment contains only neutral [[MATH ...]] and [[REF ...]] candidates and no manifest. Scan the complete manuscript first; decide whether each occurrence is inline, display, display_numbered, or reference; then create a schema v1 manifest with unique working markers. Convert the result to genuine MathType Equation.DSMT4 objects and MathType-native dynamic references. Keep a short expression inline when it is a grammatical part of a sentence, use a centered unnumbered display for an emphasized but unreferenced equation, and promote every referenced display to display_numbered. Put each display in a standalone centered paragraph with prose immediately before it and a following sentence beginning with “where” that defines every relevant symbol, index, subscript, superscript, unit, and physical meaning without introducing extraneous variables. Preserve the three academic reference contexts equivalent to “Equation (1) indicates ...”, “as shown in Eq. (2)”, and “Therefore, as shown in Eq. (2), ...”; never type a visible number manually. Return the real DOCX, generated manifest, classification report, and manifest-aware validation JSON rather than only a procedure.",
+      "expected_output": "A real English DOCX plus a generated schema v1 manifest, classification report, and passing validation JSON. The result contains one inline equation, one centered unnumbered display, two centered numbered displays, native numbers (1) and (2), and three live MathType references in academic English prose.",
+      "files": [
+        "evals/fixtures/en-auto-classification-draft.docx"
+      ],
+      "expectations": [
+        "Scans the complete document before classification and generates its own schema v1 manifest without requesting another input file.",
+        "Creates exactly four Equation.DSMT4 objects: one inline unnumbered expression, one centered unnumbered display, and two centered numbered displays.",
+        "Promotes both referenced displays to display_numbered, assigns native MathType numbers (1) and (2), and creates exactly three live references: one to the first numbered equation and two to the second.",
+        "Preserves academic English lead-ins and reference prose, and follows every display with a where sentence defining all and only relevant symbols, indices, subscripts, superscripts, units, and physical meanings.",
+        "Validation reports zero raw [[...]] candidates, zero unresolved {{...}} markers, and zero structural errors."
+      ]
+    }
+  ]
+}

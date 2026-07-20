@@ -1,0 +1,80 @@
+{
+  "expectations": [
+    {
+      "text": "Calls or explicitly requires probe_mathtype_word and reports the exact failed named check before choosing any fallback.",
+      "passed": true,
+      "evidence": "Step 1 explicitly calls probe_mathtype_word before fallback selection. Step 2 names Word COM, the MathType program, the Word add-in, and Equation.DSMT4 registration as checks and requires stopping and reporting the failed check."
+    },
+    {
+      "text": "Does not silently use Word OMath, Caption, numbered lists, or typed references.",
+      "passed": true,
+      "evidence": "The response explicitly refuses silent substitution and says it will not secretly create OMath, Caption, numbered lists, or typed references."
+    },
+    {
+      "text": "Explains that the fallback is not MathType-native.",
+      "passed": true,
+      "evidence": "It explains that Word built-in equations and Caption use a different object/reference mechanism and that the fallback lacks MathType-native numbering and reference compatibility."
+    },
+    {
+      "text": "Requires explicit user acceptance before producing the fallback.",
+      "passed": true,
+      "evidence": "Step 4 says it will disclose differences and wait for explicit acceptance before saving a fallback file."
+    },
+    {
+      "text": "Keeps the original document unchanged while blocked or awaiting fallback authorization.",
+      "passed": true,
+      "evidence": "Step 1 requires preserving the original. The final sentence confirms that no document was created or modified in the simulated scenario."
+    }
+  ],
+  "summary": {
+    "passed": 5,
+    "failed": 0,
+    "total": 5,
+    "pass_rate": 1.0
+  },
+  "execution_metrics": {
+    "tool_calls": {},
+    "total_tool_calls": 0,
+    "total_steps": 5,
+    "errors_encountered": 0,
+    "output_chars": 501,
+    "transcript_chars": 1043,
+    "scope": "情境執行；評測器讀取 skill 與 references 的共享檔案呼叫不計入。"
+  },
+  "timing": {
+    "executor_duration_seconds": 2.6,
+    "grader_duration_seconds": 0.0,
+    "total_duration_seconds": 2.6,
+    "simulated": true,
+    "note": "情境評測估計時間；未提供文件或公式，未啟動外部工具。Grading was batched, so a per-run grader duration is unavailable."
+  },
+  "claims": [
+    {
+      "claim": "No document was created or modified in this simulated run.",
+      "type": "process",
+      "verified": true,
+      "evidence": "The transcript and answer explicitly state this, and metrics report zero tool calls."
+    },
+    {
+      "claim": "A Word OMath/Caption fallback is not MathType-native.",
+      "type": "factual",
+      "verified": true,
+      "evidence": "The answer accurately distinguishes the object, numbering, and reference mechanisms and never presents the fallback as equivalent."
+    },
+    {
+      "claim": "Fallback production requires explicit user acceptance.",
+      "type": "process",
+      "verified": true,
+      "evidence": "The proposed workflow explicitly pauses for acceptance before writing a separately labeled fallback copy."
+    }
+  ],
+  "user_notes_summary": {
+    "uncertainties": [],
+    "needs_review": [],
+    "workarounds": []
+  },
+  "eval_feedback": {
+    "suggestions": [],
+    "overall": "The updated probe assertion is supported by the exact tool name, named prerequisite checks, and explicit stop-and-report behavior."
+  }
+}

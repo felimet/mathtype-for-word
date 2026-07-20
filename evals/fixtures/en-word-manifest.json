@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "equations": [
+    {
+      "id": "state_transition",
+      "marker": "{{MATH:state_transition}}",
+      "tex": "x_{k+1} = A x_k + B u_k + w_k",
+      "layout": "display",
+      "numbered": true
+    },
+    {
+      "id": "observation_model",
+      "marker": "{{MATH:observation_model}}",
+      "tex": "y_k = C x_k + v_k",
+      "layout": "display",
+      "numbered": true
+    },
+    {
+      "id": "measurement_variance",
+      "marker": "{{MATH:measurement_variance}}",
+      "tex": "\\sigma_v^2",
+      "layout": "inline",
+      "numbered": false
+    }
+  ],
+  "references": [
+    {
+      "marker": "{{EQREF:state_transition}}",
+      "target": "state_transition"
+    },
+    {
+      "marker": "{{EQREF:observation_model}}",
+      "target": "observation_model"
+    }
+  ]
+}

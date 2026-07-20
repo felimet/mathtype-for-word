@@ -1,0 +1,79 @@
+{
+  "expectations": [
+    {
+      "text": "Does not use Word numbered lists, captions, OMath, typed numbers, or images as the primary implementation.",
+      "passed": true,
+      "evidence": "The response says it would use MathType numbering and explicitly excludes Word numbered lists, Caption, manual numbers, images, and Word built-in equations."
+    },
+    {
+      "text": "Uses a new output path and does not overwrite the input.",
+      "passed": true,
+      "evidence": "Step 2 says to immediately save as C:\\work\\paper-final.docx and modify only the copy; the response does not claim that a file was actually created."
+    },
+    {
+      "text": "Creates or specifies one display Equation.DSMT4 object with simple (1) numbering and no current chapter/section component.",
+      "passed": false,
+      "evidence": "The response specifies a MathType display equation and simple (1) formatting, but never identifies or verifies the required Equation.DSMT4 object class. ‘MathType 物件’ is insufficient evidence for this exact structural requirement."
+    },
+    {
+      "text": "Creates or specifies a MathType-native reference through MTReference and MTPlaceRef, resulting in GOTOBUTTON/REF and a ZEqnNum bookmark.",
+      "passed": false,
+      "evidence": "The response mentions Insert Equation Reference and generic Word fields/bookmarks, but does not specify MTReference, MTPlaceRef, GOTOBUTTON, nested REF, or a ZEqnNum bookmark."
+    },
+    {
+      "text": "Runs or explicitly requires both probe and manifest-aware validation before claiming completion.",
+      "passed": false,
+      "evidence": "A prerequisite probe and reopen checks are proposed, but no manifest is created and the validation is not manifest-aware."
+    }
+  ],
+  "summary": {
+    "passed": 2,
+    "failed": 3,
+    "total": 5,
+    "pass_rate": 0.4
+  },
+  "execution_metrics": {
+    "tool_calls": {},
+    "total_tool_calls": 0,
+    "total_steps": 6,
+    "errors_encountered": 0,
+    "output_chars": 746,
+    "transcript_chars": 1250
+  },
+  "timing": {
+    "executor_duration_seconds": 21.0,
+    "grader_duration_seconds": 0.0,
+    "total_duration_seconds": 21.0,
+    "simulated": true,
+    "note": "No external DOCX execution occurred; duration is an executor estimate for prompt analysis and answer generation. Grading was batched, so a per-run grader duration is unavailable."
+  },
+  "claims": [
+    {
+      "claim": "No output file was created because the input DOCX was unavailable.",
+      "type": "process",
+      "verified": true,
+      "evidence": "The response explicitly says it cannot claim completion, and metrics report zero tool calls."
+    },
+    {
+      "claim": "The planned equation number would display as (1) without chapter or section components.",
+      "type": "quality",
+      "verified": true,
+      "evidence": "Step 4 explicitly selects simple equation-only numbering with parentheses and disables chapter and section numbers. This verifies the plan only."
+    },
+    {
+      "claim": "The planned reference would have the exact native GOTOBUTTON/REF/ZEqnNum structure.",
+      "type": "quality",
+      "verified": false,
+      "evidence": "The response only names Insert Equation Reference and generic fields/bookmarks; the exact native field and bookmark structure is neither specified nor observable in an output artifact."
+    }
+  ],
+  "user_notes_summary": {
+    "uncertainties": [],
+    "needs_review": [],
+    "workarounds": []
+  },
+  "eval_feedback": {
+    "suggestions": [],
+    "overall": "The eval meaningfully distinguishes generic MathType guidance from the skill's required object class, native field structure, and manifest-aware validation."
+  }
+}
