@@ -152,7 +152,7 @@ Paste this prompt into an AI agent after installing the toolkit:
 Use the installed MathType for Word and PowerPoint toolkit for a smoke test. Run both prerequisite probes, then use evals/fixtures/en-paper-draft.docx with en-word-manifest.json and evals/fixtures/en-presentation-draft.pptx with en-powerpoint-manifest.json to create new temporary DOCX and PPTX outputs. Keep Word, PowerPoint, and MathType silent and hidden throughout; do not overwrite the source fixtures. Validate both outputs and report their paths, MathType object counts, Word native number/reference counts, and the PowerPoint mathml_verified count. Do not claim success unless both validations return ok: true.
 ```
 
-The bridge preserves source files, writes through temporary sibling Office files, and refuses to replace an existing output unless `-Overwrite` is explicit.
+The bridge preserves source files, validates each temporary Office file before atomic publication, and refuses to replace an existing output unless `-Overwrite` is explicit. It removes the current run's tokenized temporary sibling on handled exits and sweeps only matching siblings older than 24 hours; MCP timeouts request cleanup with the same per-run token.
 
 ## Repository layout
 

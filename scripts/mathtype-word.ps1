@@ -1,12 +1,14 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)]
-    [ValidateSet('probe', 'probe-pptx', 'configure-defaults', 'render', 'validate', 'update', 'render-pptx', 'validate-pptx')]
+    [ValidateSet('probe', 'probe-pptx', 'configure-defaults', 'render', 'validate', 'update', 'render-pptx', 'validate-pptx', 'cleanup')]
     [string]$Action,
 
     [string]$InputPath,
     [string]$OutputPath,
     [string]$ManifestPath,
+    [ValidatePattern('^[0-9a-fA-F]{32}$')]
+    [string]$RunToken,
     [switch]$Overwrite
 )
 
@@ -31,6 +33,8 @@ $script:AutomationTimeoutMilliseconds = if ($env:MATHTYPE_AUTOMATION_TIMEOUT_MS)
     [int]$env:MATHTYPE_AUTOMATION_TIMEOUT_MS
 }
 else { 15000 }
+$script:RunToken = if ($RunToken) { $RunToken.ToLowerInvariant() } else { [Guid]::NewGuid().ToString('N') }
+$script:StaleFileCutoffHours = 24
 
 if (-not ('MathTypeOleData' -as [type])) {
     Add-Type -TypeDefinition @'
@@ -139,6 +143,53 @@ function Resolve-OutputFile {
         throw "OutputPath already exists. Pass -Overwrite to replace it: $fullPath"
     }
     return $fullPath
+}
+
+function Get-OfficeTemporaryPath {
+    param([Parameter(Mandatory)][string]$Destination)
+    $fullPath = [IO.Path]::GetFullPath($Destination)
+    $extension = [IO.Path]::GetExtension($fullPath).ToLowerInvariant()
+    if ($extension -notin @('.docx', '.pptx')) {
+        throw "Temporary Office output must use .docx or .pptx: $fullPath"
+    }
+    $name = [IO.Path]::GetFileNameWithoutExtension($fullPath)
+    return Join-Path (Split-Path -Parent $fullPath) ".$name.$($script:RunToken).tmp$extension"
+}
+
+function Remove-OfficeTemporaryArtifacts {
+    param(
+        [Parameter(Mandatory)][string]$Destination,
+        [switch]$IncludeCurrentRun
+    )
+    $fullPath = [IO.Path]::GetFullPath($Destination)
+    $extension = [IO.Path]::GetExtension($fullPath).ToLowerInvariant()
+    if ($extension -notin @('.docx', '.pptx')) {
+        throw "Cleanup target must use .docx or .pptx: $fullPath"
+    }
+    $parent = Split-Path -Parent $fullPath
+    $currentPath = Get-OfficeTemporaryPath -Destination $fullPath
+    $removed = [System.Collections.Generic.List[string]]::new()
+    if (Test-Path -LiteralPath $parent -PathType Container) {
+        $name = [regex]::Escape([IO.Path]::GetFileNameWithoutExtension($fullPath))
+        $suffix = [regex]::Escape(".tmp$extension")
+        $pattern = "^\.$name\.[0-9a-f]{32}$suffix$"
+        $cutoff = [DateTime]::UtcNow.AddHours(-$script:StaleFileCutoffHours)
+        foreach ($file in @(Get-ChildItem -LiteralPath $parent -File -Force)) {
+            if ($file.Name -notmatch $pattern -or ($file.Attributes -band [IO.FileAttributes]::ReparsePoint)) { continue }
+            $isCurrent = [string]::Equals($file.FullName, $currentPath, [StringComparison]::OrdinalIgnoreCase)
+            if (-not (($IncludeCurrentRun -and $isCurrent) -or $file.LastWriteTimeUtc -lt $cutoff)) { continue }
+            Remove-Item -LiteralPath $file.FullName -Force
+            if (Test-Path -LiteralPath $file.FullName) { throw "Temporary file cleanup could not be verified: $($file.FullName)" }
+            $removed.Add($file.FullName)
+            Write-Log -Level INFO -Message "Removed temporary Office file: $($file.FullName)"
+        }
+    }
+    return [ordered]@{
+        removed = @($removed)
+        current_run_removed = $removed.Contains($currentPath)
+        current_run_remaining = Test-Path -LiteralPath $currentPath
+        stale_cutoff_hours = $script:StaleFileCutoffHours
+    }
 }
 
 function Release-ComObject {
@@ -533,18 +584,32 @@ function Insert-NativeReference {
 }
 
 function Save-DocumentAtomically {
-    param([Parameter(Mandatory)][string]$Destination)
-    $temporary = Join-Path (Split-Path -Parent $Destination) ('.' + [IO.Path]::GetFileNameWithoutExtension($Destination) + '.' + [Guid]::NewGuid().ToString('N') + '.tmp.docx')
+    param([Parameter(Mandatory)][string]$Destination, $Manifest)
+    $temporary = Get-OfficeTemporaryPath -Destination $Destination
+    $null = Remove-OfficeTemporaryArtifacts -Destination $Destination
     try {
         Write-Log -Level INFO -Message "Saving temporary DOCX: $temporary"
         $script:Document.SaveAs2($temporary, 16)
         Write-Log -Level INFO -Message 'Word SaveAs2 returned.'
         Stop-Word
+        try {
+            Start-Word -ReadOnly -DocumentPath $temporary
+            $script:Document.Fields.Update() | Out-Null
+            $validation = Get-ValidationReport -DocumentPath $Destination -Manifest $Manifest
+        }
+        finally { Stop-Word }
+        if (-not $validation.ok) {
+            throw "Generated DOCX validation failed: $($validation.errors -join '; ')"
+        }
         Move-Item -LiteralPath $temporary -Destination $Destination -Force
+        if (-not (Test-Path -LiteralPath $Destination -PathType Leaf) -or (Get-Item -LiteralPath $Destination).Length -le 0) {
+            throw "Published DOCX could not be verified: $Destination"
+        }
         Write-Log -Level INFO -Message "Moved completed DOCX to: $Destination"
+        return $validation
     }
     finally {
-        if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Force }
+        $null = Remove-OfficeTemporaryArtifacts -Destination $Destination -IncludeCurrentRun
     }
 }
 
@@ -665,16 +730,29 @@ function Add-MathTypeEquationToSlide {
 }
 
 function Save-PresentationAtomically {
-    param([Parameter(Mandatory)][string]$Destination)
-    $temporary = Join-Path (Split-Path -Parent $Destination) ('.' + [IO.Path]::GetFileNameWithoutExtension($Destination) + '.' + [Guid]::NewGuid().ToString('N') + '.tmp.pptx')
+    param([Parameter(Mandatory)][string]$Destination, [Parameter(Mandatory)]$Manifest)
+    $temporary = Get-OfficeTemporaryPath -Destination $Destination
+    $null = Remove-OfficeTemporaryArtifacts -Destination $Destination
     try {
         Write-Log -Level INFO -Message "Saving temporary PPTX: $temporary"
         $script:Presentation.SaveAs($temporary, 24)
         Stop-PowerPoint
+        try {
+            Start-PowerPoint -PresentationPath $temporary -ReadOnly
+            $validation = Get-PresentationValidationReport -PresentationPath $Destination -Manifest $Manifest
+        }
+        finally { Stop-PowerPoint }
+        if (-not $validation.ok) {
+            throw "Generated PPTX validation failed: $($validation.errors -join '; ')"
+        }
         Move-Item -LiteralPath $temporary -Destination $Destination -Force
+        if (-not (Test-Path -LiteralPath $Destination -PathType Leaf) -or (Get-Item -LiteralPath $Destination).Length -le 0) {
+            throw "Published PPTX could not be verified: $Destination"
+        }
+        return $validation
     }
     finally {
-        if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Force }
+        $null = Remove-OfficeTemporaryArtifacts -Destination $Destination -IncludeCurrentRun
     }
 }
 
@@ -700,7 +778,7 @@ function Invoke-RenderPptx {
             Release-ComObject $marker.shape
             Release-ComObject $marker.slide
         }
-        Save-PresentationAtomically -Destination $output
+        $validation = Save-PresentationAtomically -Destination $output -Manifest $manifest
     }
     finally {
         Stop-PowerPoint
@@ -714,6 +792,7 @@ function Invoke-RenderPptx {
         equations = @($manifest.equations).Count
         object_type = 'Equation.DSMT4 floating OLE'
         numbering_and_references = 'Not available through the MathType 7 PowerPoint integration.'
+        validation = $validation
     })
 }
 
@@ -922,7 +1001,7 @@ function Invoke-Render {
             Insert-NativeReference -Reference $reference -TargetField $numberFields[[string]$reference.target]
         }
         $script:Document.Fields.Update() | Out-Null
-        Save-DocumentAtomically -Destination $output
+        $validation = Save-DocumentAtomically -Destination $output -Manifest $manifest
     }
     finally {
         Stop-Word
@@ -938,6 +1017,7 @@ function Invoke-Render {
         references = @($manifest.references).Count
         number_format = '(1), (2), (3), ...'
         reference_mechanism = 'MathType-native GOTOBUTTON/REF fields'
+        validation = $validation
     })
 }
 
@@ -1070,10 +1150,17 @@ function Invoke-Update {
     try {
         Start-Word -DocumentPath $input
         $updated = $script:Document.Fields.Update()
-        Save-DocumentAtomically -Destination $destination
+        $validation = Save-DocumentAtomically -Destination $destination -Manifest $null
     }
     finally { Stop-Word }
-    Write-JsonResult ([ordered]@{ ok = $true; action = 'update'; output_path = $destination; fields_update_result = $updated })
+    Write-JsonResult ([ordered]@{ ok = $true; action = 'update'; output_path = $destination; fields_update_result = $updated; validation = $validation })
+}
+
+function Invoke-Cleanup {
+    if ([string]::IsNullOrWhiteSpace($OutputPath)) { throw 'cleanup requires OutputPath.' }
+    $cleanup = Remove-OfficeTemporaryArtifacts -Destination $OutputPath -IncludeCurrentRun
+    Write-JsonResult ([ordered]@{ ok = -not $cleanup.current_run_remaining; action = 'cleanup'; cleanup = $cleanup })
+    if ($cleanup.current_run_remaining) { exit 4 }
 }
 
 try {
@@ -1086,6 +1173,7 @@ try {
         'update' { Invoke-Update }
         'render-pptx' { Invoke-RenderPptx }
         'validate-pptx' { Invoke-ValidatePptx }
+        'cleanup' { Invoke-Cleanup }
     }
 }
 catch {

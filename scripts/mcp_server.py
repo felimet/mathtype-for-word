@@ -9,6 +9,7 @@ import re
 import subprocess
 import sys
 import traceback
+import uuid
 from pathlib import Path
 from typing import Any, BinaryIO
 
@@ -282,7 +283,51 @@ def _terminate_process_pid(process_id: int) -> bool:
     return completed.returncode == 0
 
 
+def _cleanup_bridge_output(output_path: str | None, run_token: str) -> dict[str, Any]:
+    if not output_path:
+        return {"ok": True, "skipped": "No output path was supplied."}
+    command = [
+        _powershell_executable(),
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        str(SCRIPT_PATH),
+        "-Action",
+        "cleanup",
+        "-OutputPath",
+        output_path,
+        "-RunToken",
+        run_token,
+    ]
+    try:
+        completed = subprocess.run(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+            check=False,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {"ok": False, "error": f"Cleanup bridge failed: {exc}"}
+    lines = [line.strip() for line in completed.stdout.splitlines() if line.strip()]
+    if not lines:
+        return {"ok": False, "error": f"Cleanup bridge returned no JSON (exit {completed.returncode})."}
+    try:
+        return json.loads(lines[-1])
+    except json.JSONDecodeError as exc:
+        return {"ok": False, "error": f"Cleanup bridge returned invalid JSON: {exc}"}
+
+
 def _invoke_bridge(action: str, arguments: dict[str, Any], timeout: int | None = None) -> dict[str, Any]:
+    run_token = uuid.uuid4().hex
     command = [
         _powershell_executable(),
         "-NoLogo",
@@ -294,6 +339,8 @@ def _invoke_bridge(action: str, arguments: dict[str, Any], timeout: int | None =
         str(SCRIPT_PATH),
         "-Action",
         action,
+        "-RunToken",
+        run_token,
     ]
     mapping = {
         "input_path": "-InputPath",
@@ -345,6 +392,7 @@ def _invoke_bridge(action: str, arguments: dict[str, Any], timeout: int | None =
         ]
         cleaned = bool(word_process_id and word_process_id in terminated)
         _restore_warning_preferences(preferences)
+        cleanup = _cleanup_bridge_output(arguments.get("output_path"), run_token)
         return {
             "ok": False,
             "action": action,
@@ -354,6 +402,7 @@ def _invoke_bridge(action: str, arguments: dict[str, Any], timeout: int | None =
             "new_word_pids_observed": new_word_pids,
             "new_powerpoint_pids_observed": new_power_point_pids,
             "isolated_office_processes_terminated": terminated,
+            "temporary_file_cleanup": cleanup,
         }
     if completed.stderr.strip():
         _log(completed.stderr.strip())

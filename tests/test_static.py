@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import shutil
+import subprocess
+import tempfile
+import time
 import unittest
 import zipfile
 from pathlib import Path
@@ -250,6 +255,64 @@ class StaticContractTests(unittest.TestCase):
         text = (ROOT / "scripts" / "package_plugin.py").read_text(encoding="utf-8")
         self.assertIn('"mathtype-for-word-workspace"', text)
         self.assertIn('("evals", "results")', text)
+
+    def test_cleanup_removes_only_current_and_stale_owned_files(self) -> None:
+        pwsh = shutil.which("pwsh.exe") or shutil.which("pwsh")
+        if not pwsh:
+            self.skipTest("PowerShell 7 is unavailable")
+        token = "1" * 32
+        stale_token = "2" * 32
+        fresh_token = "3" * 32
+        with tempfile.TemporaryDirectory(dir=ROOT) as directory:
+            root = Path(directory)
+            output = root / "result.docx"
+            current = root / f".result.{token}.tmp.docx"
+            stale = root / f".result.{stale_token}.tmp.docx"
+            fresh = root / f".result.{fresh_token}.tmp.docx"
+            malformed = root / ".result.not-a-guid.tmp.docx"
+            unrelated = root / f".other.{stale_token}.tmp.docx"
+            for path in (current, stale, fresh, malformed, unrelated):
+                path.write_bytes(b"test")
+            old = time.time() - (25 * 60 * 60)
+            for path in (stale, malformed, unrelated):
+                os.utime(path, (old, old))
+            completed = subprocess.run(
+                [
+                    pwsh,
+                    "-NoLogo",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-File",
+                    str(ROOT / "scripts" / "mathtype-word.ps1"),
+                    "-Action",
+                    "cleanup",
+                    "-OutputPath",
+                    str(output),
+                    "-RunToken",
+                    token,
+                ],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                timeout=30,
+                check=False,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            result = json.loads(completed.stdout.splitlines()[-1])
+            self.assertTrue(result["ok"])
+            self.assertFalse(current.exists())
+            self.assertFalse(stale.exists())
+            for path in (fresh, malformed, unrelated):
+                self.assertTrue(path.exists(), path.name)
+
+    def test_render_validation_and_timeout_cleanup_contract(self) -> None:
+        bridge = (ROOT / "scripts" / "mathtype-word.ps1").read_text(encoding="utf-8")
+        server = (ROOT / "scripts" / "mcp_server.py").read_text(encoding="utf-8")
+        self.assertIn("Generated DOCX validation failed", bridge)
+        self.assertIn("Generated PPTX validation failed", bridge)
+        self.assertIn("Remove-OfficeTemporaryArtifacts -Destination $Destination -IncludeCurrentRun", bridge)
+        self.assertIn('"-RunToken"', server)
+        self.assertIn('"temporary_file_cleanup": cleanup', server)
 
 
 if __name__ == "__main__":

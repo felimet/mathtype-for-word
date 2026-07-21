@@ -152,7 +152,7 @@ pwsh.exe -NoProfile -ExecutionPolicy Bypass -File tests/run-tests.ps1 -IncludeLi
 請使用已安裝的 MathType for Word and PowerPoint toolkit 進行簡易測試。先執行 Word 與 PowerPoint 的 prerequisite probe，再使用 evals/fixtures/en-paper-draft.docx 搭配 en-word-manifest.json，以及 evals/fixtures/en-presentation-draft.pptx 搭配 en-powerpoint-manifest.json，分別建立新的暫存 DOCX 與 PPTX 輸出。全程保持 Word、PowerPoint 與 MathType 靜默且隱藏，不得覆寫來源 fixture。完成後驗證兩個輸出，回報輸出路徑、MathType 物件數量、Word 原生編號與引用數量，以及 PowerPoint 的 mathml_verified 數量。兩項 validation 未同時回傳 ok: true 時，不得宣稱測試成功。
 ```
 
-Bridge 會保留來源檔，以同層暫存 Office 檔完成儲存；除非明確指定 `-Overwrite`，否則不覆寫既有輸出。
+Bridge 會保留來源檔，先驗證同層暫存 Office 檔，再以原子方式發布；除非明確指定 `-Overwrite`，否則不覆寫既有輸出。所有可處理的結束路徑都會刪除帶有本次執行 token 的暫存 sibling，並只掃除命名格式完全相符且超過 24 小時的舊檔；MCP 逾時也會使用相同 token 要求清理。
 
 ## Repository 結構
 
