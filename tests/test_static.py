@@ -206,6 +206,28 @@ class StaticContractTests(unittest.TestCase):
                 self.assertIn(phrase, text)
             self.assertNotIn("SkillSpector", text)
 
+    def test_silent_office_policy_and_issue_links(self) -> None:
+        bridge = (ROOT / "scripts" / "mathtype-word.ps1").read_text(encoding="utf-8")
+        skill = (ROOT / "skills" / "mathtype-for-word" / "SKILL.md").read_text(encoding="utf-8")
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        readme_zh = (ROOT / "README-zhTW.md").read_text(encoding="utf-8")
+        self.assertIn("$script:Word.Visible = $false", bridge)
+        self.assertIn("$script:Word.DisplayAlerts = 0", bridge)
+        self.assertIn("$script:PowerPoint.DisplayAlerts = 1", bridge)
+        self.assertIn("$shapeRange = $Slide.Shapes.Paste()", bridge)
+        for forbidden in ("OLEFormat.Activate", "AppActivate", "SendKeys(", "SetMathMLClipboard"):
+            self.assertNotIn(forbidden, bridge)
+        self.assertIn("Keep Word, PowerPoint, and MathType automation silent", skill)
+        self.assertIn("Silent AI-agent operation", readme)
+        self.assertIn("AI Agent 靜默操作", readme_zh)
+        for text in (readme, readme_zh):
+            self.assertIn("https://github.com/felimet/mathtype-for-word/issues", text)
+            self.assertIn("en-paper-draft.docx", text)
+            self.assertIn("en-presentation-draft.pptx", text)
+            self.assertIn("ok: true", text)
+        self.assertIn("Quick AI-agent test prompt", readme)
+        self.assertIn("AI Agent 簡易測試 Prompt", readme_zh)
+
     def test_release_versions_are_aligned(self) -> None:
         expected = "1.3.0"
         expected_author = "Jia-Ming Zhou (Felimet)"

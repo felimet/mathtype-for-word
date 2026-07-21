@@ -17,7 +17,7 @@ try {
     $probeOutput = & pwsh.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $bridge -Action probe-pptx
     $probe = $probeOutput | Select-Object -Last 1 | ConvertFrom-Json
     if (-not $probe.ok) { throw "PowerPoint probe failed: $($probe.error)" }
-    if ($null -ne $probe.word_ready) { throw 'probe-pptx must not start or require Word.' }
+    if (-not $probe.word_ready) { throw 'probe-pptx requires hidden Word conversion readiness.' }
 
     $renderOutput = & pwsh.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $bridge `
         -Action render-pptx -InputPath $inputPath -OutputPath $outputPath -ManifestPath $manifestPath
@@ -32,7 +32,7 @@ try {
     if ($validation.counts.mathml_verified -ne 1) { throw 'Expected the embedded MathML to match the manifest.' }
 
     $newWordPids = @(Get-Process WINWORD -ErrorAction SilentlyContinue | Where-Object { $baselineWordPids -notcontains $_.Id })
-    if ($newWordPids.Count -gt 0) { throw "PowerPoint integration started Word unexpectedly: $($newWordPids.Id -join ', ')" }
+    if ($newWordPids.Count -gt 0) { throw "PowerPoint integration left Word running: $($newWordPids.Id -join ', ')" }
 
     [ordered]@{ ok = $true; input = $inputPath; output = $outputPath; probe = $probe; render = $render; validation = $validation; new_word_pids = @() } |
         ConvertTo-Json -Depth 12

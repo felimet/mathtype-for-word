@@ -101,8 +101,8 @@ function New-PowerPointFixture {
     $shapes = [System.Collections.Generic.List[object]]::new()
     try {
         $powerPoint = New-Object -ComObject PowerPoint.Application
-        $powerPoint.Visible = -1
-        $presentation = $powerPoint.Presentations.Add(-1)
+        $powerPoint.DisplayAlerts = 1
+        $presentation = $powerPoint.Presentations.Add($false)
         $presentation.PageSetup.SlideWidth = 960
         $presentation.PageSetup.SlideHeight = 540
         $slide = $presentation.Slides.Add(1, 12)

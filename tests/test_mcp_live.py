@@ -71,7 +71,7 @@ class McpLiveSmokeTest(unittest.TestCase):
             self.assertTrue(
                 powerpoint_result["structuredContent"]["checks"]["mathtype_powerpoint_addin_loaded"]
             )
-            self.assertIsNone(powerpoint_result["structuredContent"]["word_ready"])
+            self.assertTrue(powerpoint_result["structuredContent"]["word_ready"])
         finally:
             if process.poll() is None:
                 process.terminate()

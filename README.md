@@ -4,13 +4,17 @@
 
 An installable AI Agent skill, Codex/Claude plugin, and MCP server for creating editable MathType 7 equations in Microsoft Word and PowerPoint. Word documents also support MathType-native equation numbering and dynamic cross-references.
 
+## Silent AI-agent operation
+
+When an AI agent edits Word, PowerPoint, or MathType content, it must operate silently in the background: do not show or activate application windows, steal keyboard focus, display modal dialogs, or automate visible UI with mouse or keyboard input. If a requested step cannot be completed silently, stop and report the limitation instead of taking over the user's desktop.
+
 ## Features
 
 - Creates genuine, editable `Equation.DSMT4` objects instead of Word OMath, images, or typed Unicode equations.
 - Supports inline and centered display equations in DOCX.
 - Classifies raw manuscript expressions as inline, unnumbered display, numbered display, or dynamic reference after scanning the complete document.
 - Inserts Word equation numbers such as `(1)` and dynamic MathType references.
-- Creates centered floating MathType equations directly in PowerPoint without using Word as an intermediary.
+- Creates centered floating MathType equations in PowerPoint through a hidden Word conversion document.
 - Preserves the source Office file and validates the generated output.
 - Provides a portable cross-agent skill/plugin plus a local MCP server for Codex and Claude hosts; ChatGPT uses the same capability through a remote endpoint or Secure MCP Tunnel.
 
@@ -130,7 +134,7 @@ Detailed bilingual prose and typography rules are in the [academic equation styl
 | Word `.docx` | Inline or centered display `Equation.DSMT4` OLE | MathType-native numbers and dynamic references |
 | PowerPoint `.pptx` | Centered floating `Equation.DSMT4` OLE created directly in PowerPoint | Word-style MathType numbering and references are not available in PowerPoint and are not imitated |
 
-PowerPoint rendering activates the desktop MathType editor and briefly uses the Windows clipboard. Run it in an unlocked interactive desktop session and do not type or replace the clipboard during conversion.
+PowerPoint rendering keeps Word, PowerPoint, and MathType hidden and does not use mouse, keyboard, focus, `AppActivate`, or `SendKeys`. It briefly uses the Windows clipboard to transfer the converted OLE object.
 
 ## Verify the installation
 
@@ -138,6 +142,14 @@ PowerPoint rendering activates the desktop MathType editor and briefly uses the 
 pwsh.exe -NoProfile -ExecutionPolicy Bypass -File scripts/mathtype-word.ps1 -Action probe
 pwsh.exe -NoProfile -ExecutionPolicy Bypass -File scripts/mathtype-word.ps1 -Action probe-pptx
 pwsh.exe -NoProfile -ExecutionPolicy Bypass -File tests/run-tests.ps1 -IncludeLiveOffice
+```
+
+### Quick AI-agent test prompt
+
+Paste this prompt into an AI agent after installing the toolkit:
+
+```text
+Use the installed MathType for Word and PowerPoint toolkit for a smoke test. Run both prerequisite probes, then use evals/fixtures/en-paper-draft.docx with en-word-manifest.json and evals/fixtures/en-presentation-draft.pptx with en-powerpoint-manifest.json to create new temporary DOCX and PPTX outputs. Keep Word, PowerPoint, and MathType silent and hidden throughout; do not overwrite the source fixtures. Validate both outputs and report their paths, MathType object counts, Word native number/reference counts, and the PowerPoint mathml_verified count. Do not claim success unless both validations return ok: true.
 ```
 
 The bridge preserves source files, writes through temporary sibling Office files, and refuses to replace an existing output unless `-Overwrite` is explicit.
@@ -159,6 +171,10 @@ python scripts/package_plugin.py
 ```
 
 The command creates `dist/mathtype-for-word-plugin.zip` and its SHA-256 file. The standalone skill package is `dist/mathtype-for-word.skill`.
+
+## Support
+
+If you encounter any problems, please open a [GitHub Issue](https://github.com/felimet/mathtype-for-word/issues) to report them and discuss solutions.
 
 ## License
 

@@ -21,6 +21,7 @@ Create real MathType equations in DOCX and PPTX, preserving MathType-native Word
 - Never substitute Word numbered lists, captions, `SEQ Equation`, OMath, Unicode-only text, images, or manually typed numbers. Use those only as an explicitly accepted, clearly labeled fallback when MathType is unavailable.
 - PowerPoint equations are centered, floating `Equation.DSMT4` OLE objects. PowerPoint has no MathType-native equivalent of Word's equation-number/reference fields, so do not imitate them with typed numbers or links.
 - Keep each symbol's mathematical role and font style consistent across display equations, inline math, prose, captions, and definitions.
+- Keep Word, PowerPoint, and MathType automation silent: leave application windows hidden, suppress modal alerts, do not steal focus, and do not automate visible UI with mouse, keyboard, `AppActivate`, or `SendKeys`. If a step cannot run silently, stop and report the limitation.
 
 ## Terminal selection
 
@@ -124,7 +125,7 @@ The screenshot-level workflow also includes symbol palettes, equation browsing, 
 
 - Use desktop **MathType for Windows**, not the Microsoft 365 task-pane add-in.
 - Treat every PowerPoint equation as a floating object; there is no inline OLE placement.
-- Run conversion only in an unlocked interactive desktop session. The bridge briefly owns the Windows clipboard and activates the embedded MathType editor, so process equations sequentially and do not type during conversion.
+- Keep Word, PowerPoint, and MathType hidden. The bridge uses hidden Word conversion and briefly transfers the OLE object through the Windows clipboard without mouse, keyboard, focus, `AppActivate`, or `SendKeys`.
 - Do not launch Word for a PPTX job; the direct PowerPoint path must leave the set of `WINWORD` process IDs unchanged.
 - Do not promise MathType-native PowerPoint equation numbering or cross-references. Keep those features in Word, or ask the user to accept a clearly labeled static slide annotation.
 - Do not rasterize equations. A valid PPTX output retains `Equation.DSMT4` and opens in desktop MathType when edited.

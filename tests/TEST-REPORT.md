@@ -1,6 +1,6 @@
 # Test report
 
-Date: 2026-07-20
+Date: 2026-07-22
 
 Host: Windows, Word 16.0, PowerPoint 16.0, MathType 7.11.1.462, PowerShell 7.6.3, Python 3.13
 
@@ -24,12 +24,12 @@ pwsh.exe -NoProfile -ExecutionPolicy Bypass -File tests\run-tests.ps1 -IncludeLi
 
 Result: PASS
 
-- Python unittest cases: 15 total. The latest documentation-only rerun passed 14 and intentionally skipped the live Office case; the unchanged live Office path passed in the preceding full suite.
+- Python unittest cases: 16 total, all passed with live Office enabled.
 - MCP initialize, ping, eight-tool listing, unknown method, shared plugin launcher, and live Word/PowerPoint probe calls: passed.
 - Six real bilingual Office eval fixtures are valid ZIP/OOXML packages and contain their declared markers. The two automatic-classification DOCX fixtures contain four neutral equation candidates and three reference candidates each.
 - JSON manifests, requested defaults, bilingual academic-writing and symbol-typography contracts, README prerequisites and terminal routing, aligned release versions, platform variables, frontmatter, and placeholder checks: passed.
 - All PowerShell files parsed without errors.
-- Live Word and live direct-PowerPoint MathType renders plus read-only validation: passed.
+- Live Word and silent hidden Word-to-PowerPoint MathType renders plus read-only validation: passed.
 - A real MCP `tools/call` render and validate round trip produced an English PPTX with `mathtype_objects=1` and `mathml_verified=1`.
 
 ## Live Word integration evidence
@@ -84,8 +84,8 @@ The PowerPoint test used `en-presentation-draft.pptx` and its Presentation MathM
 
 Verified mechanisms:
 
-- PowerPoint creates and activates `Equation.DSMT4` directly; Word is not launched or used as an intermediary.
-- The embedded MathType editor consumes bare MathML from `CF_UNICODETEXT` and `RunForConversion` refreshes PowerPoint's OLE preview.
+- Hidden Word converts one-line TeX through `MTCommand_TeXToggle`; PowerPoint receives the resulting `Equation.DSMT4` OLE object through a windowless presentation.
+- The bridge does not call `OLEFormat.Activate`, `AppActivate`, or `SendKeys`, and all Office processes created by the test exited normally.
 - Validation reopens the PPTX, reads MathML from the OLE `IDataObject`, rejects Unicode replacement characters, and compares the normalized content signature with the manifest.
 - The equation is centered to within one point and the complete marker text box is removed.
 
@@ -114,7 +114,7 @@ Executor timing, token usage, and tool-call counts were not captured during exec
 ## Operational findings
 
 - PowerShell 7 is required. Windows PowerShell 5.1 blocked on MathType macro calls and its older C# compiler cannot compile the bridge helper.
-- PowerPoint conversion requires an unlocked interactive desktop because it activates the embedded MathType editor and briefly owns the Windows clipboard. Equations are processed serially.
-- A full Word-then-PowerPoint stress rerun exposed one empty first clipboard paste. The bridge now retries the complete activate/paste/close/read-back cycle up to three times and saves only after the returned MathML signature matches; the following standalone and full-sequence live suites passed.
-- Rapid Office teardown can leave a PowerPoint process visible for a fraction of a second; the live test waits up to five seconds before reporting a leak.
+- PowerPoint conversion now requires hidden Word readiness because MathType 7 rejects direct `IDataObject.SetData` writes for all tested MathML formats. Reusing the proven hidden Word `Toggle TeX` path avoids visible MathType editor automation.
+- The bridge briefly uses the Windows clipboard to transfer the converted OLE object, but does not show or activate Word, PowerPoint, or MathType windows and does not synthesize mouse or keyboard input.
+- The live test waits up to five seconds for test-created Office processes to exit and fails if Word remains running.
 - The bridge preserves the source, saves through a sibling temporary Office file, and refuses to replace an existing output without `-Overwrite`.

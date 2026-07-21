@@ -144,8 +144,8 @@ TOOLS: list[dict[str, Any]] = [
     {
         "name": "render_mathtype_powerpoint_presentation",
         "description": (
-            "Replace marker-only PPTX text boxes with editable, centered Equation.DSMT4 floating OLE "
-            "objects through PowerPoint's embedded MathType editor with MathML clipboard input. PowerPoint has no "
+            "Silently replace marker-only PPTX text boxes with editable, centered Equation.DSMT4 floating OLE "
+            "objects through hidden Word MathType conversion and MathML validation. PowerPoint has no "
             "MathType-native Word equation numbering/reference mechanism."
         ),
         "inputSchema": {

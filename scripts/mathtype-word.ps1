@@ -39,13 +39,8 @@ using System.Runtime.InteropServices.ComTypes;
 using System.Text;
 using System.Runtime.InteropServices;
 public static class MathTypeOleData {
-    private const uint GMEM_MOVEABLE_ZEROINIT = 0x0042;
-
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     private static extern uint RegisterClipboardFormat(string format);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern IntPtr GlobalAlloc(uint flags, UIntPtr bytes);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern IntPtr GlobalLock(IntPtr memory);
@@ -54,66 +49,10 @@ public static class MathTypeOleData {
     private static extern bool GlobalUnlock(IntPtr memory);
 
     [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern IntPtr GlobalFree(IntPtr memory);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
     private static extern UIntPtr GlobalSize(IntPtr memory);
-
-    [DllImport("user32.dll", SetLastError = true)]
-    private static extern bool OpenClipboard(IntPtr owner);
-
-    [DllImport("user32.dll", SetLastError = true)]
-    private static extern bool EmptyClipboard();
-
-    [DllImport("user32.dll", SetLastError = true)]
-    private static extern IntPtr SetClipboardData(uint format, IntPtr memory);
-
-    [DllImport("user32.dll", SetLastError = true)]
-    private static extern bool CloseClipboard();
 
     [DllImport("ole32.dll")]
     private static extern void ReleaseStgMedium(ref STGMEDIUM medium);
-
-    private static string WrapMathML(string mathML) {
-        if (string.IsNullOrWhiteSpace(mathML)) throw new ArgumentException("MathML is empty.", "mathML");
-        return mathML.TrimStart().StartsWith("<?xml", StringComparison.Ordinal)
-            ? mathML
-            : "<?xml version='1.0'?><!-- MathType@Translator@5@5@MathML2 (Clipboard).tdl@MathML 2.0 (Clipboard)@ --><html>" + mathML + "</html><!-- MathType@End@5@5@ -->";
-    }
-
-    private static void PutClipboardBytes(uint format, byte[] bytes) {
-        IntPtr memory = GlobalAlloc(GMEM_MOVEABLE_ZEROINIT, (UIntPtr)bytes.Length);
-        if (memory == IntPtr.Zero) throw new OutOfMemoryException("GlobalAlloc failed for MathML data.");
-        try {
-            IntPtr target = GlobalLock(memory);
-            if (target == IntPtr.Zero) throw new InvalidOperationException("GlobalLock failed for MathML data.");
-            try { Marshal.Copy(bytes, 0, target, bytes.Length); }
-            finally { GlobalUnlock(memory); }
-            if (SetClipboardData(format, memory) == IntPtr.Zero)
-                throw new InvalidOperationException("SetClipboardData failed for MathML data.");
-            memory = IntPtr.Zero;
-        }
-        finally { if (memory != IntPtr.Zero) GlobalFree(memory); }
-    }
-
-    public static void SetMathMLClipboard(string mathML) {
-        byte[] bytes = Encoding.UTF8.GetBytes(WrapMathML(mathML) + "\0");
-        byte[] unicodeText = Encoding.Unicode.GetBytes(mathML + "\0");
-        bool opened = false;
-        for (int attempt = 0; attempt < 20 && !opened; attempt++) {
-            opened = OpenClipboard(IntPtr.Zero);
-            if (!opened) System.Threading.Thread.Sleep(50);
-        }
-        if (!opened) throw new InvalidOperationException("OpenClipboard failed for MathML data.");
-        try {
-            if (!EmptyClipboard()) throw new InvalidOperationException("EmptyClipboard failed for MathML data.");
-            PutClipboardBytes(RegisterClipboardFormat("MathML Presentation"), bytes);
-            PutClipboardBytes(RegisterClipboardFormat("MathML"), bytes);
-            PutClipboardBytes(RegisterClipboardFormat("application/mathml+xml"), bytes);
-            PutClipboardBytes(13, unicodeText); // CF_UNICODETEXT: MathType 7 parses bare MathML on paste.
-        }
-        finally { CloseClipboard(); }
-    }
 
     public static string GetMathML(object oleObject) {
         if (oleObject == null) throw new ArgumentNullException("oleObject");
@@ -231,12 +170,12 @@ function Start-PowerPoint {
     param([Parameter(Mandatory)][string]$PresentationPath, [switch]$ReadOnly)
     $before = @(Get-Process POWERPNT -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id)
     $script:PowerPoint = New-Object -ComObject PowerPoint.Application
-    $script:PowerPoint.Visible = -1
+    $script:PowerPoint.DisplayAlerts = 1
     $script:Presentation = $script:PowerPoint.Presentations.Open(
         $PresentationPath,
         [bool]$ReadOnly,
         $false,
-        (-not [bool]$ReadOnly)
+        $false
     )
     $newProcesses = @(Get-Process POWERPNT -ErrorAction SilentlyContinue | Where-Object { $before -notcontains $_.Id })
     if ($newProcesses.Count -eq 1) {
@@ -369,6 +308,8 @@ function Assert-PresentationManifest {
         if (-not $ids.Add([string]$equation.id)) { throw "Duplicate presentation equation id: $($equation.id)" }
         if ([string]::IsNullOrWhiteSpace($equation.marker)) { throw "Presentation equation '$($equation.id)' requires a marker." }
         if (-not $markers.Add([string]$equation.marker)) { throw "Duplicate presentation marker: $($equation.marker)" }
+        if ([string]::IsNullOrWhiteSpace($equation.tex)) { throw "Presentation equation '$($equation.id)' requires TeX for silent conversion." }
+        if ([string]$equation.tex -match '[\r\n]') { throw "Presentation equation '$($equation.id)' TeX must be one line." }
         if ([string]::IsNullOrWhiteSpace($equation.mathml)) { throw "Presentation equation '$($equation.id)' requires Presentation MathML." }
         if ([string]$equation.mathml -notmatch '^\s*<math\b' -or [string]$equation.mathml -notmatch '</math>\s*$') {
             throw "Presentation equation '$($equation.id)' mathml must contain one complete MathML math element."
@@ -660,82 +601,47 @@ function Add-MathTypeEquationToSlide {
     )
     $height = if ($null -ne $Equation.height_points) { [double]$Equation.height_points } else { 32.0 }
     $shape = $null
+    $shapeRange = $null
+    $wordShape = $null
     $oleObject = $null
-    $shell = $null
     try {
-        $shape = $Slide.Shapes.AddOLEObject(
-            0,
-            $Top,
-            -1,
-            -1,
-            'Equation.DSMT4',
-            '',
-            $false,
-            '',
-            0,
-            '',
-            $false
-        )
-        $expectedSignature = Get-MathMLTextSignature -MathML ([string]$Equation.mathml)
-        $converted = $false
-        $lastFailure = 'No conversion attempt ran.'
-        for ($attempt = 1; $attempt -le 3 -and -not $converted; $attempt++) {
-            try {
-                [MathTypeOleData]::SetMathMLClipboard([string]$Equation.mathml)
-                $shape.OLEFormat.Activate()
-                $deadline = [DateTime]::UtcNow.AddMilliseconds($script:AutomationTimeoutMilliseconds)
-                $mathTypeProcess = $null
-                while ([DateTime]::UtcNow -lt $deadline) {
-                    $mathTypeProcess = Get-Process MathType -ErrorAction SilentlyContinue |
-                        Where-Object { $_.MainWindowHandle -ne 0 } |
-                        Select-Object -First 1
-                    if ($null -ne $mathTypeProcess) { break }
-                    Start-Sleep -Milliseconds $script:AutomationPollMilliseconds
-                }
-                if ($null -eq $mathTypeProcess) { throw 'MathType editor window did not appear.' }
-                $shell = New-Object -ComObject WScript.Shell
-                if (-not $shell.AppActivate([int]$mathTypeProcess.Id)) {
-                    throw "Could not activate MathType editor process $($mathTypeProcess.Id)."
-                }
-                Start-Sleep -Milliseconds 700
-                $shell.SendKeys('^a')
-                Start-Sleep -Milliseconds 200
-                $shell.SendKeys('^v')
-                Start-Sleep -Milliseconds 1200
-                $shell.SendKeys('%{F4}')
-                Start-Sleep -Milliseconds 2500
-
-                # RunForConversion refreshes PowerPoint's cached OLE preview after the
-                # embedded MathType editor has committed the MathML payload.
-                $shape.OLEFormat.DoVerb(2)
-                Start-Sleep -Milliseconds 500
-                $oleObject = $shape.OLEFormat.Object
-                $embeddedMathML = [MathTypeOleData]::GetMathML($oleObject)
-                if ($embeddedMathML -notmatch '<(?:[A-Za-z_][\w.-]*:)?math\b') {
-                    throw 'Embedded MathType object did not expose a MathML root after editing.'
-                }
-                if ($embeddedMathML.Contains([char]0xFFFD) -or $embeddedMathML -match '&#x0*FFFD;') {
-                    throw 'Embedded MathType object contains a Unicode replacement character.'
-                }
-                $actualSignature = Get-MathMLTextSignature -MathML $embeddedMathML
-                if ([string]::IsNullOrWhiteSpace($actualSignature) -or $actualSignature -ne $expectedSignature) {
-                    throw "MathML text signature mismatch: expected '$expectedSignature', got '$actualSignature'."
-                }
-                $converted = $true
-            }
-            catch {
-                $lastFailure = $_.Exception.Message
-                Write-Log -Level WARN -Message "PowerPoint MathType conversion attempt $attempt/3 failed for '$($Equation.id)': $lastFailure"
-            }
-            finally {
-                Release-ComObject $shell
-                Release-ComObject $oleObject
-                $shell = $null
-                $oleObject = $null
-            }
+        $delimited = '\[' + [string]$Equation.tex + '\]'
+        $script:Document.Content.Text = $delimited
+        $sourceRange = $script:Document.Range(0, $delimited.Length)
+        $sourceRange.Select()
+        $before = $script:Document.InlineShapes.Count
+        $null = $script:Word.Run('MTCommand_TeXToggle')
+        Release-ComObject $sourceRange
+        if ($script:Document.InlineShapes.Count -ne ($before + 1)) {
+            throw 'Hidden Word conversion did not create exactly one MathType object.'
         }
-        if (-not $converted) {
-            throw "MathType editor failed to commit the requested MathML after 3 attempts: $lastFailure"
+        $wordShape = $script:Document.InlineShapes.Item($script:Document.InlineShapes.Count)
+        $wordShape.Range.Copy()
+        $shapeRange = $Slide.Shapes.Paste()
+        for ($index = 1; $index -le $shapeRange.Count; $index++) {
+            $candidate = $shapeRange.Item($index)
+            $progId = $null
+            try { $progId = $candidate.OLEFormat.ProgID } catch {}
+            if ($progId -eq 'Equation.DSMT4' -and $null -eq $shape) {
+                $shape = $candidate
+                continue
+            }
+            $candidate.Delete()
+            Release-ComObject $candidate
+        }
+        if ($null -eq $shape) { throw 'Pasted PowerPoint shapes contain no Equation.DSMT4 object.' }
+        $expectedSignature = Get-MathMLTextSignature -MathML ([string]$Equation.mathml)
+        $oleObject = $shape.OLEFormat.Object
+        $embeddedMathML = [MathTypeOleData]::GetMathML($oleObject)
+        if ($embeddedMathML -notmatch '<(?:[A-Za-z_][\w.-]*:)?math\b') {
+            throw 'Embedded MathType object did not expose a MathML root after silent conversion.'
+        }
+        if ($embeddedMathML.Contains([char]0xFFFD) -or $embeddedMathML -match '&#x0*FFFD;') {
+            throw 'Embedded MathType object contains a Unicode replacement character.'
+        }
+        $actualSignature = Get-MathMLTextSignature -MathML $embeddedMathML
+        if ([string]::IsNullOrWhiteSpace($actualSignature) -or $actualSignature -ne $expectedSignature) {
+            throw "MathML text signature mismatch: expected '$expectedSignature', got '$actualSignature'."
         }
         $shape.LockAspectRatio = -1
         $shape.Height = $height
@@ -748,11 +654,13 @@ function Add-MathTypeEquationToSlide {
     catch {
         if ($null -ne $shape) { try { $shape.Delete() } catch {} }
         Release-ComObject $shape
-        throw "Direct PowerPoint MathType OLE insertion failed for '$($Equation.id)': $($_.Exception.Message)"
+        throw "Silent PowerPoint MathType OLE insertion failed for '$($Equation.id)': $($_.Exception.Message)"
     }
     finally {
-        Release-ComObject $shell
+        Release-ComObject $shapeRange
+        Release-ComObject $wordShape
         Release-ComObject $oleObject
+        if ($null -ne $script:Document) { $script:Document.Content.Text = '' }
     }
 }
 
@@ -781,6 +689,7 @@ function Invoke-RenderPptx {
     Assert-PresentationManifest -Manifest $manifest
 
     try {
+        Start-Word
         Start-PowerPoint -PresentationPath $input
         foreach ($equation in @($manifest.equations)) {
             $marker = Find-PresentationMarkerShape -Marker ([string]$equation.marker)
@@ -795,6 +704,7 @@ function Invoke-RenderPptx {
     }
     finally {
         Stop-PowerPoint
+        Stop-Word
     }
     Write-JsonResult ([ordered]@{
         ok = $true
@@ -905,28 +815,28 @@ function Invoke-Probe {
     try { $progId = (Get-ItemProperty -LiteralPath 'Registry::HKEY_CLASSES_ROOT\Equation.DSMT4').'(default)' } catch {}
     $wordVersion = $null
     $templateLoaded = $false
-    if (-not $PowerPointRequired) {
-        try {
-            Start-Word
-            $wordVersion = $script:Word.Version
-            foreach ($template in @($script:Word.Templates)) {
-                if ($template.Name -like 'MathType Commands*.dotm') { $templateLoaded = $true }
-                Release-ComObject $template
-            }
+    try {
+        Start-Word
+        $wordVersion = $script:Word.Version
+        foreach ($template in @($script:Word.Templates)) {
+            if ($template.Name -like 'MathType Commands*.dotm') { $templateLoaded = $true }
+            Release-ComObject $template
         }
-        finally { Stop-Word }
     }
+    finally { Stop-Word }
     $powerPointVersion = $null
     $powerPointAddInLoaded = $false
-    try {
-        $script:PowerPoint = New-Object -ComObject PowerPoint.Application
-        $powerPointVersion = $script:PowerPoint.Version
-        foreach ($addIn in @($script:PowerPoint.AddIns)) {
-            if ($addIn.Name -eq 'MathType AddIn') { $powerPointAddInLoaded = $true }
-            Release-ComObject $addIn
+    if ($PowerPointRequired) {
+        try {
+            $script:PowerPoint = New-Object -ComObject PowerPoint.Application
+            $powerPointVersion = $script:PowerPoint.Version
+            foreach ($addIn in @($script:PowerPoint.AddIns)) {
+                if ($addIn.Name -eq 'MathType AddIn') { $powerPointAddInLoaded = $true }
+                Release-ComObject $addIn
+            }
         }
+        finally { Stop-PowerPoint }
     }
-    finally { Stop-PowerPoint }
     $mathTypeVersion = if (Test-Path -LiteralPath $mathTypeExe) {
         (Get-Item -LiteralPath $mathTypeExe).VersionInfo.ProductVersion
     }
@@ -939,27 +849,20 @@ function Invoke-Probe {
         mathtype_product_version   = $mathTypeVersion
         equation_dsmt4_registered  = $null -ne $progId
         equation_dsmt4_description = $progId
+        word_com                   = $null -ne $wordVersion
+        word_version               = $wordVersion
+        mathtype_word_template     = Test-Path -LiteralPath $wordTemplate
+        mathtype_word_template_path = $wordTemplate
+        mathtype_template_loaded   = $templateLoaded
     }
     if ($PowerPointRequired) {
         $checks['powerpoint_com'] = $null -ne $powerPointVersion
         $checks['powerpoint_version'] = $powerPointVersion
         $checks['mathtype_powerpoint_addin_loaded'] = $powerPointAddInLoaded
     }
-    else {
-        $checks['word_com'] = $null -ne $wordVersion
-        $checks['word_version'] = $wordVersion
-        $checks['mathtype_word_template'] = Test-Path -LiteralPath $wordTemplate
-        $checks['mathtype_word_template_path'] = $wordTemplate
-        $checks['mathtype_template_loaded'] = $templateLoaded
-    }
-    $wordReady = if ($PowerPointRequired) {
-        $null
-    }
-    else {
-        $checks.windows -and $checks.word_com -and $checks.mathtype_executable -and $checks.mathtype_word_template -and $checks.mathtype_template_loaded -and $checks.equation_dsmt4_registered
-    }
+    $wordReady = $checks.windows -and $checks.word_com -and $checks.mathtype_executable -and $checks.mathtype_word_template -and $checks.mathtype_template_loaded -and $checks.equation_dsmt4_registered
     $powerPointReady = if ($PowerPointRequired) {
-        $checks.windows -and $checks.mathtype_executable -and $checks.equation_dsmt4_registered -and $checks.powerpoint_com -and $checks.mathtype_powerpoint_addin_loaded
+        $wordReady -and $checks.powerpoint_com -and $checks.mathtype_powerpoint_addin_loaded
     }
     else { $null }
     $ready = if ($PowerPointRequired) { $powerPointReady } else { $wordReady }

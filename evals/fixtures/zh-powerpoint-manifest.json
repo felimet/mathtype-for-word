@@ -4,6 +4,7 @@
     {
       "id": "sensible_heat",
       "marker": "{{MATH:sensible_heat}}",
+      "tex": "Q=m c_p \\Delta T",
       "mathml": "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><mrow><mi>Q</mi><mo>=</mo><mi>m</mi><msub><mi>c</mi><mi>p</mi></msub><mi>&#x0394;</mi><mi>T</mi></mrow></math>",
       "height_points": 36
     }
