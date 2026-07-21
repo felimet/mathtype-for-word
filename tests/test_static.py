@@ -43,6 +43,24 @@ class StaticContractTests(unittest.TestCase):
         self.assertRegex(text, r"(?m)^description: .+MathType.+$")
         self.assertLessEqual(len(text.splitlines()), 500)
 
+    def test_shared_output_coordination_contract(self) -> None:
+        text = (ROOT / "skills" / "mathtype-for-word" / "SKILL.md").read_text(
+            encoding="utf-8"
+        )
+        for phrase in (
+            "## Shared output coordination",
+            "user's current working directory",
+            "Operate as a complete standalone skill",
+            "Do not assume, require, install, or prompt for `endnote-for-word`",
+            "mathtype-for-word-manifest.json",
+            "<source-stem>-mathtype-endnote.docx",
+            "Verify that `endnote-for-word` is available",
+            "complete only the MathType scope",
+            "one shared final DOCX",
+            "validate the final shared document with both skills",
+        ):
+            self.assertIn(phrase, text)
+
     def test_requested_number_defaults(self) -> None:
         data = json.loads((ROOT / "config" / "defaults.json").read_text(encoding="utf-8"))
         numbering = data["numbering"]
