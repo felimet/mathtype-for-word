@@ -31,7 +31,15 @@ try {
     if ($validation.counts.mathtype_objects -ne 1) { throw 'Expected exactly one MathType OLE object.' }
     if ($validation.counts.mathml_verified -ne 1) { throw 'Expected the embedded MathML to match the manifest.' }
 
-    $newWordPids = @(Get-Process WINWORD -ErrorAction SilentlyContinue | Where-Object { $baselineWordPids -notcontains $_.Id })
+    # Word shuts down asynchronously after Quit(); the hidden conversion instance needs a few
+    # seconds to exit once the bridge process releases its COM references. Poll instead of
+    # sampling once, otherwise a healthy run is reported as a leak.
+    $wordExitDeadline = [DateTime]::UtcNow.AddSeconds(30)
+    do {
+        $newWordPids = @(Get-Process WINWORD -ErrorAction SilentlyContinue | Where-Object { $baselineWordPids -notcontains $_.Id })
+        if ($newWordPids.Count -eq 0) { break }
+        Start-Sleep -Milliseconds 250
+    } while ([DateTime]::UtcNow -lt $wordExitDeadline)
     if ($newWordPids.Count -gt 0) { throw "PowerPoint integration left Word running: $($newWordPids.Id -join ', ')" }
 
     [ordered]@{ ok = $true; input = $inputPath; output = $outputPath; probe = $probe; render = $render; validation = $validation; new_word_pids = @() } |
