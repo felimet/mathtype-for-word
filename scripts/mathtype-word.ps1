@@ -55,6 +55,10 @@ $script:BridgeMutex = $null
 $script:BridgeLockWaitSeconds = if ($env:MATHTYPE_BRIDGE_LOCK_WAIT_SECONDS) { [int]$env:MATHTYPE_BRIDGE_LOCK_WAIT_SECONDS } else { 30 }
 $script:WdLineSpaceAtLeast = 3
 $script:WdLineSpaceExactly = 4
+$script:WdWithInTable = 12
+$script:WdRowHeightAtLeast = 1
+$script:WdRowHeightExactly = 2
+$script:RowHeightRepairs = [System.Collections.Generic.List[string]]::new()
 # Word draws an exactly spaced line at its nominal height; allow rounding before calling an object clipped.
 $script:LineSpacingTolerancePoints = 0.5
 $script:LineSpacingRepairs = [System.Collections.Generic.List[string]]::new()
@@ -65,6 +69,8 @@ $script:AutomationTimeoutMilliseconds = if ($env:MATHTYPE_AUTOMATION_TIMEOUT_MS)
 else { 15000 }
 $script:RunToken = if ($RunToken) { $RunToken.ToLowerInvariant() } else { [Guid]::NewGuid().ToString('N') }
 $script:StaleFileCutoffHours = 24
+$script:ClipboardAttempts = 3
+$script:ClipboardRetryMilliseconds = 500
 
 if (-not ('MathTypeOleData' -as [type])) {
     Add-Type -TypeDefinition @'
@@ -129,6 +135,64 @@ public static class MathTypeOleData {
 '@
 }
 
+if (-not ('OfficeDesktop' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+public static class OfficeDesktop {
+    private delegate bool WindowVisitor(IntPtr window, IntPtr parameter);
+    [DllImport("user32.dll")] private static extern bool EnumWindows(WindowVisitor visitor, IntPtr parameter);
+    [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
+    [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr window);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetClassName(IntPtr window, StringBuilder name, int size);
+    [DllImport("user32.dll", SetLastError = true)] private static extern bool OpenClipboard(IntPtr owner);
+    [DllImport("user32.dll")] private static extern bool CloseClipboard();
+    [DllImport("user32.dll")] private static extern IntPtr GetOpenClipboardWindow();
+    [DllImport("user32.dll")] private static extern IntPtr GetClipboardOwner();
+
+    // A visible Word or PowerPoint main frame, or a PowerPoint slide show (a .ppsx opened into the instance shows
+    // only screenClass), ignoring dialogs: a MathType dialog in a hidden instance is what hangs it (the same rule
+    // as the MCP watchdog).
+    public static bool HasVisibleFrame(int processId) {
+        bool found = false;
+        EnumWindows(delegate (IntPtr window, IntPtr parameter) {
+            uint owner;
+            GetWindowThreadProcessId(window, out owner);
+            if (owner != (uint)processId || !IsWindowVisible(window)) return true;
+            StringBuilder name = new StringBuilder(64);
+            GetClassName(window, name, name.Capacity);
+            string windowClass = name.ToString();
+            found = windowClass == "OpusApp" || windowClass == "PPTFrameClass" || windowClass == "screenClass";
+            return !found;
+        }, IntPtr.Zero);
+        return found;
+    }
+
+    // Null when the clipboard can be opened; otherwise who holds it open. Opening and closing without emptying
+    // leaves the contents untouched. A holder that opened it without a window cannot be named; the last writer is
+    // then a clue, unless it is Word or PowerPoint, which here is usually this bridge's own instance.
+    public static string DescribeClipboardBlocker() {
+        if (OpenClipboard(IntPtr.Zero)) { CloseClipboard(); return null; }
+        string holder = Describe(GetOpenClipboardWindow());
+        if (holder != null) return "held open by " + holder;
+        string writer = Describe(GetClipboardOwner());
+        bool office = writer != null && (writer.StartsWith("WINWORD ") || writer.StartsWith("POWERPNT "));
+        return "held open by an unidentified program (often a clipboard manager or chat app)" +
+            (writer != null && !office ? "; the last program that wrote to it is " + writer : "");
+    }
+
+    private static string Describe(IntPtr window) {
+        if (window == IntPtr.Zero) return null;
+        uint processId;
+        if (GetWindowThreadProcessId(window, out processId) == 0 || processId == 0) return null;
+        try { return System.Diagnostics.Process.GetProcessById((int)processId).ProcessName + " (PID " + processId + ")"; }
+        catch (ArgumentException) { return null; }
+    }
+}
+'@
+}
+
 function Write-Log {
     param(
         [Parameter(Mandatory)]
@@ -183,9 +247,9 @@ function Stop-OrphanedOffice {
     foreach ($entry in $entries) {
         try {
             $process = Get-Process -Id ([int]$entry.pid) -ErrorAction SilentlyContinue
-            # Another start time means a reused PID; a visible main window means the user took the instance over.
+            # Another start time means a reused PID; a visible main frame means the user took the instance over.
             if ($null -eq $process -or $process.StartTime.ToFileTimeUtc() -ne [long]$entry.start) { continue }
-            if ($process.MainWindowHandle -ne [IntPtr]::Zero) {
+            if ([OfficeDesktop]::HasVisibleFrame($process.Id)) {
                 Write-Log -Level WARN -Message "Left $($process.ProcessName) $($process.Id) from an interrupted run running: it shows a window."
                 continue
             }
@@ -785,8 +849,53 @@ function Repair-ClippedLineSpacing {
     Write-Log -Level INFO -Message "Changed exact $spacing pt line spacing to at-least for '$EquationId' ($([Math]::Round($Shape.Height, 1)) pt tall)."
 }
 
+function Get-ClippingRowHeight {
+    # Returns the exact height (pt) of the object's table row when it is lower than the object itself needs, else
+    # $null; throws when the row cannot be inspected. Cell, not Rows.Item: a table with vertically merged cells
+    # exposes no single row (Word error 5991), but a cell still reports its row's rule and height.
+    # ponytail: counts only the object, its cell padding and its paragraph spacing; other lines in the cell can
+    # still clip it unnoticed. Rendering does not rely on this estimate (Repair-ClippedRowHeight).
+    param([Parameter(Mandatory)]$Shape)
+    if (-not [bool]$Shape.Range.Information($script:WdWithInTable)) { return $null }
+    $cell = $Shape.Range.Cells.Item(1)
+    $format = $Shape.Range.ParagraphFormat
+    try {
+        if ($cell.HeightRule -ne $script:WdRowHeightExactly) { return $null }
+        $needed = [double]$Shape.Height + [double]$cell.TopPadding + [double]$cell.BottomPadding +
+            [double]$format.SpaceBefore + [double]$format.SpaceAfter
+        if ($needed -gt [double]$cell.Height + $script:LineSpacingTolerancePoints) { return [double]$cell.Height }
+        return $null
+    }
+    finally {
+        Release-ComObject $cell
+        Release-ComObject $format
+    }
+}
+
+function Repair-ClippedRowHeight {
+    # An at-least row of the same height looks exactly like the exact row while the cell content fits and grows
+    # only when it does not, so every exact row that receives an equation switches without estimating the content.
+    # ponytail: only the innermost row; an exact outer row of a nested table is left as it is.
+    param([Parameter(Mandatory)]$Shape, [Parameter(Mandatory)][string]$EquationId)
+    if (-not [bool]$Shape.Range.Information($script:WdWithInTable)) { return }
+    $cell = $null
+    try {
+        $cell = $Shape.Range.Cells.Item(1)
+        if ($cell.HeightRule -ne $script:WdRowHeightExactly) { return }
+        $height = [double]$cell.Height
+        $cell.HeightRule = $script:WdRowHeightAtLeast # a cell's rule applies to its whole row
+    }
+    catch {
+        Write-Log -Level WARN -Message "Could not inspect the table row of '$EquationId'; validation reports it: $($_.Exception.Message)"
+        return
+    }
+    finally { Release-ComObject $cell }
+    $script:RowHeightRepairs.Add($EquationId)
+    Write-Log -Level INFO -Message "Changed exact $height pt table row height to at-least for '$EquationId' ($([Math]::Round($Shape.Height, 1)) pt tall)."
+}
+
 function Convert-Equation {
-    param([Parameter(Mandatory)]$Equation, [switch]$RepairLineSpacing)
+    param([Parameter(Mandatory)]$Equation, [switch]$RepairExactHeights)
     Write-Log -Level INFO -Message "Converting equation '$($Equation.id)' as $($Equation.layout), numbered=$([bool]$Equation.numbered)."
     $markerRange = Find-UniqueMarkerRange -Marker ([string]$Equation.marker)
     $position = $markerRange.Start
@@ -808,7 +917,10 @@ function Convert-Equation {
     }
     $shape = Get-MathTypeShapeNear -Position $position
     Release-ComObject $markerRange
-    if ($RepairLineSpacing) { Repair-ClippedLineSpacing -Shape $shape -EquationId ([string]$Equation.id) }
+    if ($RepairExactHeights) {
+        Repair-ClippedLineSpacing -Shape $shape -EquationId ([string]$Equation.id)
+        Repair-ClippedRowHeight -Shape $shape -EquationId ([string]$Equation.id)
+    }
 
     $numberField = $null
     if ([bool]$Equation.numbered) {
@@ -950,8 +1062,23 @@ function Add-MathTypeEquationToSlide {
             throw 'Hidden Word conversion did not create exactly one MathType object.'
         }
         $wordShape = $script:Document.InlineShapes.Item($script:Document.InlineShapes.Count)
-        $wordShape.Range.Copy()
-        $shapeRange = $Slide.Shapes.Paste()
+        # The clipboard carries the OLE object to PowerPoint. A clipboard manager may hold it open for a moment;
+        # a program that never closes it is named in the error, since only the user can close that program.
+        for ($attempt = 1; $null -eq $shapeRange; $attempt++) {
+            try {
+                $wordShape.Range.Copy()
+                $shapeRange = $Slide.Shapes.Paste()
+            }
+            catch {
+                if ($attempt -ge $script:ClipboardAttempts) {
+                    $blocker = [OfficeDesktop]::DescribeClipboardBlocker()
+                    if ($null -eq $blocker) { throw }
+                    throw "The Windows clipboard is $blocker; close or restart the program holding it, then retry. ($($_.Exception.Message))"
+                }
+                Write-Log -Level WARN -Message "Clipboard transfer attempt $attempt failed; retrying: $($_.Exception.Message)"
+                Start-Sleep -Milliseconds $script:ClipboardRetryMilliseconds
+            }
+        }
         for ($index = 1; $index -le $shapeRange.Count; $index++) {
             $candidate = $shapeRange.Item($index)
             $progId = $null
@@ -1295,14 +1422,14 @@ function Invoke-Render {
         $validationManifest = Read-Manifest -Path $ValidationManifestPath
         Assert-Manifest -Manifest $validationManifest
     }
-    $repairLineSpacing = [string]$manifest.exact_line_spacing -eq 'at_least'
+    $repairExactHeights = [string]$manifest.exact_line_spacing -eq 'at_least'
     $numberFields = @{}
     Set-TemporaryMathTypePreferences
     try {
         Start-Word -DocumentPath $input
         Write-Log -Level INFO -Message "Opened input DOCX: $input"
         foreach ($equation in @($manifest.equations)) {
-            $numberField = Convert-Equation -Equation $equation -RepairLineSpacing:$repairLineSpacing
+            $numberField = Convert-Equation -Equation $equation -RepairExactHeights:$repairExactHeights
             if ($null -ne $numberField) {
                 $numberFields[[string]$equation.id] = $numberField
                 $script:HeldComObjects.Add($numberField)
@@ -1329,6 +1456,7 @@ function Invoke-Render {
         number_format = '(1), (2), (3), ...'
         reference_mechanism = 'MathType-native GOTOBUTTON/REF fields'
         line_spacing_changed_for = @($script:LineSpacingRepairs)
+        row_height_changed_for = @($script:RowHeightRepairs)
         validation = $validation
     })
 }
@@ -1339,6 +1467,8 @@ function Get-ValidationReport {
     $warnings = [System.Collections.Generic.List[string]]::new()
     $mathTypeObjects = 0
     $clippedObjects = 0
+    $clippedRows = 0
+    $uninspectedRows = 0
     for ($index = 1; $index -le $script:Document.InlineShapes.Count; $index++) {
         $shape = $script:Document.InlineShapes.Item($index)
         $progId = $null
@@ -1346,11 +1476,19 @@ function Get-ValidationReport {
         if ($progId -eq 'Equation.DSMT4') {
             $mathTypeObjects++
             if ($null -ne (Get-ClippingLineSpacing -Shape $shape)) { $clippedObjects++ }
+            try { if ($null -ne (Get-ClippingRowHeight -Shape $shape)) { $clippedRows++ } }
+            catch { $uninspectedRows++ }
         }
         Release-ComObject $shape
     }
     if ($clippedObjects -gt 0) {
         $warnings.Add("$clippedObjects MathType object(s) are taller than the exact line spacing of their paragraph and are clipped; use at-least line spacing there.")
+    }
+    if ($clippedRows -gt 0) {
+        $warnings.Add("$clippedRows MathType object(s) are taller than the exact height of their table row and are clipped; use an at-least row height there.")
+    }
+    if ($uninspectedRows -gt 0) {
+        $warnings.Add("$uninspectedRows MathType object(s) sit in table rows whose height could not be inspected; check them for clipping.")
     }
 
     $numberFields = @()

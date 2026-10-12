@@ -357,6 +357,15 @@ class StaticContractTests(unittest.TestCase):
         # Without leaving the document grid, an at-least line still snaps to the grid pitch.
         repair = bridge[bridge.index("function Repair-ClippedLineSpacing"):bridge.index("function Convert-Equation")]
         self.assertIn("DisableLineHeightGrid = -1", repair)
+        self.assertIn("$cell.HeightRule = $script:WdRowHeightAtLeast", repair)  # Rows.Item fails on merged cells
+        # A hidden instance hung on a MathType dialog shows the dialog but no main frame; that one must be ended.
+        orphan = bridge[bridge.index("function Stop-OrphanedOffice"):bridge.index("function Write-JsonResult")]
+        self.assertIn("[OfficeDesktop]::HasVisibleFrame(", orphan)
+        for text in (bridge, server):  # a slide show the user started in the instance shows only screenClass
+            self.assertIn('"screenClass"', text)
+        self.assertNotIn("MainWindowHandle", bridge)
+        slide = bridge[bridge.index("function Add-MathTypeEquationToSlide"):bridge.index("function Save-PresentationAtomically")]
+        self.assertIn("[OfficeDesktop]::DescribeClipboardBlocker()", slide)
         self.assertIn("ConvertTo-Json -Depth 20 -Compress -EscapeHandling EscapeNonAscii", bridge)
         # The journal is written before the first temporary value and restored under the lock.
         set_temporary = bridge[bridge.index("function Set-TemporaryMathTypePreferences"):bridge.index("function Restore-MathTypePreferences")]

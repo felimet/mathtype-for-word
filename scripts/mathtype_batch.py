@@ -312,6 +312,7 @@ def render(
             "equations_done": 0,
             "retries": 0,
             "line_spacing_changed_for": [],
+            "row_height_changed_for": [],
             "timeouts": [],
             "result": None,
         }
@@ -373,9 +374,12 @@ def _run_chunks(
             done = job.state["equations_done"] + len(ids)
             # Each chunk is a fresh bridge session that reports only its own repairs; keep the union.
             changed = [*job.state.get("line_spacing_changed_for", []), *(result.get("line_spacing_changed_for") or [])]
+            rows = [*job.state.get("row_height_changed_for", []), *(result.get("row_height_changed_for") or [])]
             job.log(f"Chunk {index + 1} done in {time.monotonic() - started:.0f} s ({done}/{job.state['equations_total']}).")
             if not final:
-                job.save(completed_chunks=index + 1, equations_done=done, line_spacing_changed_for=changed)  # commit
+                job.save(  # commit
+                    completed_chunks=index + 1, equations_done=done, line_spacing_changed_for=changed, row_height_changed_for=rows
+                )
                 checkpoint.unlink(missing_ok=True)
                 continue
             summary = {
@@ -385,6 +389,7 @@ def _run_chunks(
                 "numbered_equations": sum(1 for equation in manifest["equations"] if equation.get("numbered")),
                 "references": len(references),
                 "line_spacing_changed_for": changed,
+                "row_height_changed_for": rows,
                 "chunks": len(job.state["chunks"]),
                 "retries": job.state["retries"],
                 "timeouts": job.state.get("timeouts", []),
@@ -393,6 +398,7 @@ def _run_chunks(
                 completed_chunks=index + 1,
                 equations_done=done,
                 line_spacing_changed_for=changed,
+                row_height_changed_for=rows,
                 status="completed",
                 result={key: value for key, value in summary.items() if key != "validation"},
             )

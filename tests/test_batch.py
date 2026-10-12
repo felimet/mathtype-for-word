@@ -72,7 +72,8 @@ class FakeBridge:
             return {"ok": False, "error": "OutputPath already exists."}
         output.write_text(json.dumps(document), encoding="utf-8")
         return {"ok": True, "action": "render", "validation": {"ok": True},
-                "line_spacing_changed_for": [equation["id"] for equation in part["equations"]]}
+                "line_spacing_changed_for": [equation["id"] for equation in part["equations"]],
+                "row_height_changed_for": [equation["id"] for equation in part["equations"] if equation["id"] == "e2"]}
 
 
 class BatchTests(unittest.TestCase):
@@ -233,6 +234,7 @@ class BatchTests(unittest.TestCase):
     def test_line_spacing_repairs_accumulate_across_chunks(self) -> None:
         result = self.render(FakeBridge())
         self.assertEqual(sorted(result["line_spacing_changed_for"]), sorted(f"e{i}" for i in range(1, 11)))
+        self.assertEqual(result["row_height_changed_for"], ["e2"])
 
     def test_repeated_timeouts_stop_after_one_split(self) -> None:
         timeout = {"ok": False, "error": "Word/MathType bridge timed out after 240 seconds.",

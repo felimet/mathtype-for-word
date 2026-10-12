@@ -134,7 +134,7 @@ ChatGPT 無法直接連接本專案隨附的本機 stdio MCP 命令；必須建�
 | Word `.docx` | 行內或置中的獨立 `Equation.DSMT4` OLE | MathType 原生編號與動態引用 |
 | PowerPoint `.pptx` | 直接在 PowerPoint 建立的置中浮動 `Equation.DSMT4` OLE | PowerPoint 不具備 Word 的 MathType 編號引用機制，本工具不以手打內容假冒 |
 
-PowerPoint 轉換會保持 Word、PowerPoint 與 MathType 隱藏，不使用滑鼠、鍵盤、焦點、`AppActivate` 或 `SendKeys`；轉移已轉換的 OLE 物件時會短暫使用 Windows 剪貼簿。
+PowerPoint 轉換會保持 Word、PowerPoint 與 MathType 隱藏，不使用滑鼠、鍵盤、焦點、`AppActivate` 或 `SendKeys`；轉移已轉換的 OLE 物件時會短暫使用 Windows 剪貼簿，並覆蓋使用者原本複製的內容。
 
 ## 驗證安裝
 

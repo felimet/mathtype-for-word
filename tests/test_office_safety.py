@@ -27,6 +27,31 @@ import mcp_server  # noqa: E402
 
 PWSH = shutil.which("pwsh.exe") or shutil.which("pwsh")
 SLEEPER = [sys.executable, "-c", "import time; time.sleep(60)"]
+# A stand-in for Office with one visible top-level window of class argv[1] (1x1, off-screen, no taskbar button).
+WINDOW = r"""
+import ctypes, sys, time
+from ctypes import wintypes
+u = ctypes.windll.user32
+u.DefWindowProcW.restype = ctypes.c_ssize_t
+u.DefWindowProcW.argtypes = (wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
+u.CreateWindowExW.restype = wintypes.HWND
+PROC = ctypes.WINFUNCTYPE(ctypes.c_ssize_t, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
+class WNDCLASSW(ctypes.Structure):
+    _fields_ = [("style", wintypes.UINT), ("proc", PROC), ("cls", ctypes.c_int), ("wnd", ctypes.c_int),
+                ("inst", wintypes.HINSTANCE), ("icon", wintypes.HICON), ("cursor", ctypes.c_void_p),
+                ("brush", wintypes.HBRUSH), ("menu", wintypes.LPCWSTR), ("name", wintypes.LPCWSTR)]
+proc = PROC(u.DefWindowProcW)
+assert u.RegisterClassW(ctypes.byref(WNDCLASSW(proc=proc, name=sys.argv[1])))
+assert u.CreateWindowExW(0x80, sys.argv[1], None, 0x90000000, -32000, -32000, 1, 1, None, None, None, None)
+print("ready", flush=True)
+time.sleep(60)
+"""
+
+
+def window_process(class_name: str) -> subprocess.Popen:
+    process = subprocess.Popen([sys.executable, "-c", WINDOW, class_name], stdout=subprocess.PIPE, text=True)
+    assert process.stdout.readline().strip() == "ready"
+    return process
 
 
 def process_alive(process_id: int) -> bool:
@@ -225,6 +250,9 @@ class WarningPreferenceJournalTests(unittest.TestCase):
             "$names = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.AssignmentStatementAst]"
             " -and $n.Left.Extent.Text -eq '$script:WarningPreferenceNames' }, $true)\n"
             ". ([scriptblock]::Create($names.Extent.Text))\n"
+            "$desktop = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.IfStatementAst]"
+            " -and $n.Extent.Text.StartsWith(\"if (-not ('OfficeDesktop'\") }, $false)\n"
+            ". ([scriptblock]::Create($desktop.Extent.Text))\n"
             "$script:WordCommandsKey = $Key\n$script:WarningJournalPath = $Journal\n"
             "$script:UserConfigDirectory = Split-Path -Parent $Journal\n"
             "$script:OfficeJournalPath = Join-Path $script:UserConfigDirectory 'office-processes.json'\n"
@@ -302,28 +330,33 @@ class WarningPreferenceJournalTests(unittest.TestCase):
 
     @unittest.skipUnless(PWSH, "PowerShell 7 is unavailable")
     def test_the_next_lock_holder_ends_office_left_by_a_killed_bridge(self) -> None:
-        # Windowless stand-ins for hidden Word. A killed lock holder journaled both; the second entry carries
-        # another start time, as when its PID was reused, and must survive.
-        orphan, reused = subprocess.Popen(SLEEPER), subprocess.Popen(SLEEPER)
+        # A killed lock holder journaled four stand-ins: hidden Word showing only a MathType dialog (ended), Word
+        # whose main frame the user made visible and PowerPoint showing the user's slide show (both kept), and a
+        # reused PID (another start time; kept). The watchdog's own check must agree.
+        orphan, frame, show = window_process("bosa_sdm_msword"), window_process("OpusApp"), window_process("screenClass")
+        reused = subprocess.Popen(SLEEPER)
+        processes = (orphan, frame, show, reused)
         journal = self.directory / "office-processes.json"
         try:
-            self.run_bridge_functions(
-                f"$script:BridgeMutex = 'held'\nAdd-LaunchedOffice (Get-Process -Id {orphan.pid})\n"
-                f"Add-LaunchedOffice (Get-Process -Id {reused.pid})")
+            self.assertEqual([mcp_server._has_visible_main_window(p.pid) for p in (orphan, frame, show)], [False, True, True])
+            self.run_bridge_functions("$script:BridgeMutex = 'held'\n"
+                                      + "".join(f"Add-LaunchedOffice (Get-Process -Id {p.pid})\n" for p in processes))
             entries = json.loads(journal.read_text(encoding="utf-8-sig"))
-            entries[1]["start"] += 1
+            entries[3]["start"] += 1
             journal.write_text(json.dumps(entries), encoding="utf-8")
             self.run_bridge_functions("Enter-BridgeLock\nExit-BridgeLock")
             self.assertIsNotNone(orphan.wait(10))
-            self.assertIsNone(reused.poll())
+            self.assertEqual([p.poll() for p in (frame, show, reused)], [None, None, None])
             self.assertFalse(journal.exists())
             # Bridges that do not hold the lock (validate, update, probe) never journal their Office.
             self.run_bridge_functions(f"Add-LaunchedOffice (Get-Process -Id {reused.pid})")
             self.assertFalse(journal.exists())
         finally:
-            for process in (orphan, reused):
+            for process in processes:
                 process.kill()
                 process.wait()
+                if process.stdout:
+                    process.stdout.close()
 
 
 class CrossFileContractTests(unittest.TestCase):
@@ -337,6 +370,58 @@ class CrossFileContractTests(unittest.TestCase):
         self.assertIn(f"'HKCU:\\{mcp_server.WORD_COMMANDS_KEY}'", bridge)
         names = ", ".join(f"'{name}'" for name in mcp_server.WARNING_PREFERENCE_NAMES)
         self.assertIn(f"$script:WarningPreferenceNames = @({names})", bridge)
+
+
+@unittest.skipUnless(PWSH, "PowerShell 7 is unavailable")
+class BridgeHelperTests(unittest.TestCase):
+    def run_functions(self, names: tuple[str, ...], code: str) -> str:
+        with tempfile.TemporaryDirectory() as directory:
+            script = Path(directory) / "helpers.ps1"
+            script.write_text(
+                "param($Bridge)\nSet-StrictMode -Version Latest\n$ErrorActionPreference = 'Stop'\n"
+                "$ast = [System.Management.Automation.Language.Parser]::ParseFile($Bridge, [ref]$null, [ref]$null)\n"
+                f"foreach ($name in @({', '.join(repr(name) for name in names)})) {{\n"
+                "  $definition = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst]"
+                " -and $n.Name -eq $name }, $true)\n"
+                "  . ([scriptblock]::Create($definition.Extent.Text))\n}\n"
+                "foreach ($name in '$script:ClipboardAttempts',"
+                " '$script:ClipboardRetryMilliseconds') {\n"
+                "  $assignment = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.AssignmentStatementAst]"
+                " -and $n.Left.Extent.Text -eq $name }, $true)\n"
+                "  . ([scriptblock]::Create($assignment.Extent.Text))\n}\n" + code + "\n",
+                encoding="utf-8",
+            )
+            completed = subprocess.run(
+                [PWSH, "-NoLogo", "-NoProfile", "-NonInteractive", "-File", str(script), "-Bridge", str(BRIDGE)],
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60, check=False,
+            )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        return completed.stdout
+
+    def test_a_briefly_held_clipboard_is_retried(self) -> None:
+        # Fakes stand in for Word and PowerPoint: Paste fails twice, as while a clipboard manager holds the clipboard.
+        code = (
+            "function Release-ComObject { param($Object) }\nfunction Write-Log { param($Level, $Message) }\n"
+            "$script:pastes = 0; $script:inline = 0\n"
+            "$script:fakeRange = [pscustomobject]@{} | Add-Member -PassThru ScriptMethod Select {}\n"
+            "$script:fakeShape = [pscustomobject]@{ Range = ([pscustomobject]@{} | Add-Member -PassThru ScriptMethod Copy {}) }\n"
+            "$inlineShapes = [pscustomobject]@{} | Add-Member -PassThru ScriptProperty Count { $script:inline } |"
+            " Add-Member -PassThru ScriptMethod Item { param($i) $script:fakeShape }\n"
+            "$script:Document = [pscustomobject]@{ Content = [pscustomobject]@{ Text = '' }; InlineShapes = $inlineShapes } |"
+            " Add-Member -PassThru ScriptMethod Range { param($s, $e) $script:fakeRange }\n"
+            "$script:Word = [pscustomobject]@{} | Add-Member -PassThru ScriptMethod Run { param($m) $script:inline++ }\n"
+            "$shapes = [pscustomobject]@{} | Add-Member -PassThru ScriptMethod Paste {"
+            " $script:pastes++; if ($script:pastes -lt 3) { throw 'clipboard busy' }; [pscustomobject]@{ Count = 0 } }\n"
+            "$equation = [pscustomobject]@{ id = 'e1'; tex = 'x'; mathml = '<math/>'; height_points = $null }\n"
+            "$watch = [Diagnostics.Stopwatch]::StartNew()\n"
+            "try { Add-MathTypeEquationToSlide -Equation $equation -Slide ([pscustomobject]@{ Shapes = $shapes }) -Top 0 }"
+            " catch { $message = $_.Exception.Message }\n"
+            "\"$($script:pastes)|$($watch.ElapsedMilliseconds)|$message\""
+        )
+        pastes, elapsed, message = self.run_functions(("Add-MathTypeEquationToSlide",), code).strip().split("|", 2)
+        self.assertEqual(pastes, "3")  # the third transfer succeeded
+        self.assertGreaterEqual(int(elapsed), 900)  # two waits, not a burst that a short hold outlasts
+        self.assertIn("no Equation.DSMT4 object", message)  # failed past the clipboard, on the fake shapes
 
 
 class Utf8TransportTests(unittest.TestCase):

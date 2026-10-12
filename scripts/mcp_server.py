@@ -421,7 +421,7 @@ def _has_visible_main_window(process_id: int) -> bool:
     import ctypes
     from ctypes import wintypes
 
-    main_frame_classes = {"OpusApp", "PPTFrameClass"}
+    main_frame_classes = {"OpusApp", "PPTFrameClass", "screenClass"}  # screenClass: a slide show the user started
     found = False
 
     @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)

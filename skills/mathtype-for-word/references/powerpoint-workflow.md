@@ -6,7 +6,7 @@ Create editable `Equation.DSMT4` OLE equations in `.pptx` without showing Word, 
 
 MathType's Word-only `MTPlaceRef`, `SEQ MTEqn`, `MTReference`, and `GOTOBUTTON/REF` workflow does not exist in PowerPoint. Do not emulate it with typed equation numbers or fake hyperlinks.
 
-This is silent COM/OLE automation. Word, PowerPoint, and MathType remain hidden, and the bridge does not use mouse, keyboard, focus, `AppActivate`, or `SendKeys`. It briefly uses the Windows clipboard to transfer the OLE object, then validates the returned MathML before saving the PPTX.
+This is silent COM/OLE automation. Word, PowerPoint, and MathType remain hidden, and the bridge does not use mouse, keyboard, focus, `AppActivate`, or `SendKeys`. It briefly uses the Windows clipboard to transfer the OLE object, which replaces whatever the user had copied, then validates the returned MathML before saving the PPTX.
 
 PowerPoint runs as a single instance, so the bridge attaches to the user's PowerPoint when it is already open. It refuses a presentation the user already has open, closes only its own presentation, and leaves PowerPoint running; it quits only an instance it launched itself that holds no other presentation.
 

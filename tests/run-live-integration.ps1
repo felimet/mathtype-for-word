@@ -56,6 +56,10 @@ try {
     $gridOff = '<w:snapToGrid w:val="0"/>'
     if ((Get-DocumentXml -Path $inputPath).Contains($gridOff)) { throw 'The fixture already leaves the document grid.' }
     if (-not (Get-DocumentXml -Path $outputPath).Contains($gridOff)) { throw 'The repaired paragraph still snaps to the document grid.' }
+    if (@($render.row_height_changed_for) -notcontains 'table_cell') { throw 'The exact table row was not switched to an at-least height.' }
+    $exactRow = 'w:hRule="exact"'
+    if (-not (Get-DocumentXml -Path $inputPath).Contains($exactRow)) { throw 'The fixture lacks an exact table row height.' }
+    if ((Get-DocumentXml -Path $outputPath).Contains($exactRow)) { throw 'The table row holding the equation still has an exact height.' }
     $validation = Assert-Validation -Path $outputPath -Label 'Single-session render'
 
     # One equation per Word session: the unreferenced numbered equation is committed in an early chunk, and the
@@ -70,6 +74,7 @@ try {
         throw "Batched output_path did not round-trip: $($batched.output_path)"
     }
     if (@($batched.line_spacing_changed_for) -notcontains 'clipped_fraction') { throw 'Batched render lost an earlier chunk''s line-spacing change.' }
+    if (@($batched.row_height_changed_for) -notcontains 'table_cell') { throw 'Batched render lost an earlier chunk''s row-height change.' }
     $batchedValidation = Assert-Validation -Path $batchedOutputPath -Label 'Batched render'
     $status = & $python.Source $batch status --output $batchedOutputPath | Select-Object -Last 1 | ConvertFrom-Json
     if ($status.status -ne 'completed') { throw "Batched job status is $($status.status)." }

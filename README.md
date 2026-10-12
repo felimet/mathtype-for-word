@@ -134,7 +134,7 @@ Detailed bilingual prose and typography rules are in the [academic equation styl
 | Word `.docx` | Inline or centered display `Equation.DSMT4` OLE | MathType-native numbers and dynamic references |
 | PowerPoint `.pptx` | Centered floating `Equation.DSMT4` OLE created directly in PowerPoint | Word-style MathType numbering and references are not available in PowerPoint and are not imitated |
 
-PowerPoint rendering keeps Word, PowerPoint, and MathType hidden and does not use mouse, keyboard, focus, `AppActivate`, or `SendKeys`. It briefly uses the Windows clipboard to transfer the converted OLE object.
+PowerPoint rendering keeps Word, PowerPoint, and MathType hidden and does not use mouse, keyboard, focus, `AppActivate`, or `SendKeys`. It briefly uses the Windows clipboard to transfer the converted OLE object, which replaces whatever the user had copied.
 
 ## Verify the installation
 

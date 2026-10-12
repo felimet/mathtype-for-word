@@ -39,9 +39,17 @@ try {
     $selection.TypeParagraph()
     $selection.ParagraphFormat.LineSpacingRule = 0
     # Word's Find can return a table-cell match again; the marker search must still terminate.
-    $table = $document.Tables.Add($selection.Range, 1, 2)
-    $table.Cell(1, 1).Range.Text = 'Cell value'
+    $table = $document.Tables.Add($selection.Range, 2, 2)
     $table.Cell(1, 2).Range.Text = 'Ratio {{MATH:table_cell}}'
+    $table.Cell(2, 2).Range.Text = 'Second row'
+    # An exact row height clips the fraction unless the bridge switches the row to an at-least height. The
+    # vertically merged first column makes Word refuse Rows.Item for the whole table.
+    $row = $table.Rows.Item(1)
+    $row.HeightRule = 2
+    $row.Height = 14
+    $table.Cell(1, 1).Merge($table.Cell(2, 1))
+    $table.Cell(1, 1).Range.Text = 'Merged label'
+    [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($row)
     [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($table)
     $document.SaveAs2([IO.Path]::GetFullPath($OutputPath), 16)
 }

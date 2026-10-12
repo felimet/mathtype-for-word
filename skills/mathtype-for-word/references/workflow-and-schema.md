@@ -16,7 +16,7 @@ The bridge performs a deterministic transaction:
 1. Open the input DOCX in an isolated hidden Word instance.
 2. Require every marker to occur exactly once.
 3. Replace equation markers with TeX delimited for MathType Toggle TeX.
-4. Require exactly one new `Equation.DSMT4` object per equation. When the paragraph has exact line spacing lower than the new object, switch it to at-least spacing with the same value and stop it snapping to the document line grid, which exact spacing ignored (`exact_line_spacing`).
+4. Require exactly one new `Equation.DSMT4` object per equation. When the paragraph has exact line spacing lower than the new object, switch it to at-least spacing with the same value and stop it snapping to the document line grid, which exact spacing ignored. A table row with an exact height that receives an equation becomes an at-least row of the same height, which looks the same while its content fits (`exact_line_spacing`).
 5. For numbered displays, call MathType's native number command and normalize its native fields to `(n)`.
 6. Replace reference markers through MathType's `MTReference` and `MTPlaceRef` workflow.
 7. Update Word fields.
@@ -34,7 +34,7 @@ One hidden Word session fails with RPC errors after a few hundred conversions, s
 3. Any other chunk that fails because its Word session broke down (RPC error, crash, a first timeout) is retried split in half; a second timeout in a row stops the job. Any other failure stops the job and names its cause. If the last chunk fails that way, resuming or lowering `batch_size` reruns the same chunk: keep referenced equations plus references well below a few hundred per document, or render the document in parts (for example per chapter).
 4. Calling render again with the same input, output, and manifest resumes after the last committed chunk. A changed input or manifest starts over.
 
-The render result lists every equation whose paragraph line spacing changed (`line_spacing_changed_for`, across all chunks) and every watchdog timeout with its process cleanup (`timeouts`).
+The render result lists every equation whose paragraph line spacing or table row height changed (`line_spacing_changed_for`, `row_height_changed_for`, across all chunks) and every watchdog timeout with its process cleanup (`timeouts`).
 
 Pass `background: true` when the job may outlast the client's tool-call time limit, then poll `get_mathtype_render_status` with the same output path. Job state, checkpoints, and the log live in `%APPDATA%\MathTypeForWordAgent\jobs`, never beside the user's files. `cleanup: true` removes them once the job is completed, failed, or interrupted; do not clean a failed or interrupted job you intend to resume, because its next render starts from the first chunk.
 
@@ -68,7 +68,7 @@ Rules:
 - `schema_version` must equal `1`.
 - `equations` is required. `references` may be empty or omitted.
 - `numbered` defaults to `false` when omitted.
-- Optional top-level `exact_line_spacing`: `"at_least"` (default) or `"keep"`. With `"keep"`, an equation taller than its paragraph's exact line spacing stays clipped and validation reports a warning.
+- Optional top-level `exact_line_spacing`: `"at_least"` (default) or `"keep"`. With `"keep"`, an equation taller than its paragraph's exact line spacing or its table row's exact height stays clipped and validation reports a warning.
 - `id` values are unique, case-sensitive JSON strings; a reference `target` is the same string.
 - All equation and reference markers are unique across the manifest.
 - A marker occurs exactly once in the DOCX.
