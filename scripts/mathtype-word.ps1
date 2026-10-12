@@ -13,7 +13,10 @@ param(
     # The manifest covers only part of the document: markers outside it may remain and counts are lower bounds.
     [switch]$PartialManifest,
     # Validate the saved DOCX against this manifest instead of -ManifestPath (last chunk of a batched render).
-    [string]$ValidationManifestPath
+    [string]$ValidationManifestPath,
+    # Bookmark each numbered equation so a later session can reference it (every chunk of a batched render but
+    # the last, which removes the bookmarks).
+    [switch]$AnchorNumbers
 )
 
 Set-StrictMode -Version Latest
@@ -59,6 +62,8 @@ $script:WdWithInTable = 12
 $script:WdRowHeightAtLeast = 1
 $script:WdRowHeightExactly = 2
 $script:RowHeightRepairs = [System.Collections.Generic.List[string]]::new()
+# Hidden bookmarks (leading underscore) that tie an equation id to its numbered paragraph across Word sessions.
+$script:AnchorPrefix = '_MTEq'
 # Word draws an exactly spaced line at its nominal height; allow rounding before calling an object clipped.
 $script:LineSpacingTolerancePoints = 0.5
 $script:LineSpacingRepairs = [System.Collections.Generic.List[string]]::new()
@@ -577,11 +582,14 @@ function Read-Manifest {
     # -NoEnumerate keeps a one-element top-level array an array, so it is rejected instead of unwrapped.
     $manifest = Get-Content -Raw -LiteralPath $resolved | ConvertFrom-Json -NoEnumerate
     if ($manifest -isnot [System.Management.Automation.PSCustomObject]) { throw 'Manifest must be a JSON object.' }
-    Add-MissingProperties -InputObject $manifest -Defaults @{ schema_version = $null; equations = $null; references = $null; exact_line_spacing = 'at_least' }
+    Add-MissingProperties -InputObject $manifest -Defaults @{
+        schema_version = $null; equations = $null; references = $null; exact_line_spacing = 'at_least'; external_targets = @()
+    }
     if ($manifest.schema_version -ne 1) { throw 'Manifest schema_version must be 1.' }
     if ($manifest.equations -isnot [array]) { throw 'Manifest must contain an equations array.' }
     if ($null -eq $manifest.references) { $manifest.references = @() }
     elseif ($manifest.references -isnot [array]) { throw 'Manifest references must be an array.' }
+    if ($manifest.external_targets -isnot [array]) { throw 'Manifest external_targets must be an array.' }
     foreach ($equation in $manifest.equations) {
         if ($equation -isnot [System.Management.Automation.PSCustomObject]) { throw 'Every manifest equation must be a JSON object.' }
         Add-MissingProperties -InputObject $equation -Defaults @{ id = $null; marker = $null; tex = $null; layout = $null; numbered = $false }
@@ -618,12 +626,18 @@ function Assert-Manifest {
     if (@('at_least', 'keep') -notcontains [string]$Manifest.exact_line_spacing) {
         throw 'exact_line_spacing must be "at_least" or "keep".'
     }
+    # Numbered equations of an earlier session in a batched render, reachable through their anchor bookmarks.
+    $external = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($id in @($Manifest.external_targets)) {
+        if ($id -isnot [string] -or $ids.Contains($id) -or -not $external.Add($id)) { throw "Invalid external target: $id" }
+    }
     foreach ($reference in @($Manifest.references)) {
         if ([string]::IsNullOrWhiteSpace($reference.marker)) { throw 'Every reference requires a marker.' }
         if (-not $markers.Add([string]$reference.marker)) { throw "Duplicate marker: $($reference.marker)" }
-        if ($reference.target -isnot [string] -or -not $ids.Contains($reference.target)) {
+        if ($reference.target -isnot [string] -or -not ($ids.Contains($reference.target) -or $external.Contains($reference.target))) {
             throw "Reference target does not exist: $($reference.target)"
         }
+        if ($external.Contains($reference.target)) { continue }
         $target = @($Manifest.equations | Where-Object id -eq $reference.target)[0]
         if (-not [bool]$target.numbered) { throw "Reference target is not numbered: $($reference.target)" }
     }
@@ -894,8 +908,93 @@ function Repair-ClippedRowHeight {
     Write-Log -Level INFO -Message "Changed exact $height pt table row height to at-least for '$EquationId' ($([Math]::Round($Shape.Height, 1)) pt tall)."
 }
 
+function Get-AnchorName {
+    param([Parameter(Mandatory)][string]$Id)
+    # Ids are free-form strings; a bookmark name allows 40 letters, digits and underscores. (SHA256.HashData and
+    # Convert.ToHexString would need .NET 5, which PowerShell 7.0 lacks.)
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { $digest = $sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($Id)) }
+    finally { $sha.Dispose() }
+    return $script:AnchorPrefix + [BitConverter]::ToString($digest, 0, 16).Replace('-', '').ToLowerInvariant()
+}
+
+function Find-AnchoredNumberField {
+    # A reference target numbered in an earlier session: its paragraph carries the anchor bookmark.
+    param([Parameter(Mandatory)][string]$Id)
+    $name = Get-AnchorName -Id $Id
+    if (-not $script:Document.Bookmarks.Exists($name)) {
+        throw "Reference target '$Id' was not numbered in an earlier session (anchor $name is missing)."
+    }
+    $bookmark = $script:Document.Bookmarks.Item($name)
+    $fields = $bookmark.Range.Fields
+    $found = $null
+    $count = 0
+    try {
+        for ($index = 1; $index -le $fields.Count; $index++) {
+            $field = $fields.Item($index)
+            if ($field.Code.Text -match '^\s*MACROBUTTON\s+MTPlaceRef\b') {
+                $count++
+                if ($null -eq $found) { $found = $field; continue }
+            }
+            Release-ComObject $field
+        }
+    }
+    finally {
+        Release-ComObject $fields
+        Release-ComObject $bookmark
+    }
+    if ($count -gt 1) {
+        # The anchor covers the whole paragraph: with two numbers in it, the reference could land on the wrong one.
+        Release-ComObject $found
+        throw "Reference target '$Id' shares its paragraph with $($count - 1) other MathType number field(s); put each numbered display equation in its own paragraph."
+    }
+    if ($null -eq $found) { throw "Reference target '$Id' has no MathType number field in its anchored paragraph." }
+    return $found
+}
+
+function Remove-Anchors {
+    $bookmarks = $script:Document.Bookmarks
+    $showHidden = $bookmarks.ShowHidden
+    $bookmarks.ShowHidden = $true
+    $removed = 0
+    try {
+        for ($index = $bookmarks.Count; $index -ge 1; $index--) {
+            $bookmark = $bookmarks.Item($index)
+            if ($bookmark.Name.StartsWith($script:AnchorPrefix, [StringComparison]::Ordinal)) {
+                $bookmark.Delete()
+                $removed++
+            }
+            Release-ComObject $bookmark
+        }
+    }
+    finally {
+        $bookmarks.ShowHidden = $showHidden
+        Release-ComObject $bookmarks
+    }
+    if ($removed -gt 0) { Write-Log -Level INFO -Message "Removed $removed cross-session anchor bookmark(s)." }
+}
+
+function Get-AnchorCount {
+    $bookmarks = $script:Document.Bookmarks
+    $showHidden = $bookmarks.ShowHidden
+    $bookmarks.ShowHidden = $true
+    try {
+        $count = 0
+        for ($index = 1; $index -le $bookmarks.Count; $index++) {
+            $bookmark = $bookmarks.Item($index)
+            if ($bookmark.Name.StartsWith($script:AnchorPrefix, [StringComparison]::Ordinal)) { $count++ }
+            Release-ComObject $bookmark
+        }
+        return $count
+    }
+    finally {
+        $bookmarks.ShowHidden = $showHidden
+        Release-ComObject $bookmarks
+    }
+}
+
 function Convert-Equation {
-    param([Parameter(Mandatory)]$Equation, [switch]$RepairExactHeights)
+    param([Parameter(Mandatory)]$Equation, [switch]$RepairExactHeights, [switch]$AnchorNumber)
     Write-Log -Level INFO -Message "Converting equation '$($Equation.id)' as $($Equation.layout), numbered=$([bool]$Equation.numbered)."
     $markerRange = Find-UniqueMarkerRange -Marker ([string]$Equation.marker)
     $position = $markerRange.Start
@@ -936,6 +1035,11 @@ function Convert-Equation {
         Normalize-SimpleNumberField -NumberField $numberField
         Write-Log -Level INFO -Message "Normalized native number for '$($Equation.id)' to simple parenthesized format."
         Release-ComObject $paragraph
+        if ($AnchorNumber) {
+            $paragraph = $shape.Range.Paragraphs.Item(1)
+            $null = $script:Document.Bookmarks.Add((Get-AnchorName -Id ([string]$Equation.id)), $paragraph.Range)
+            Release-ComObject $paragraph
+        }
     }
     Release-ComObject $shape
     return $numberField
@@ -1429,15 +1533,22 @@ function Invoke-Render {
         Start-Word -DocumentPath $input
         Write-Log -Level INFO -Message "Opened input DOCX: $input"
         foreach ($equation in @($manifest.equations)) {
-            $numberField = Convert-Equation -Equation $equation -RepairExactHeights:$repairExactHeights
+            $numberField = Convert-Equation -Equation $equation -RepairExactHeights:$repairExactHeights -AnchorNumber:$AnchorNumbers
             if ($null -ne $numberField) {
                 $numberFields[[string]$equation.id] = $numberField
                 $script:HeldComObjects.Add($numberField)
             }
         }
         foreach ($reference in @($manifest.references)) {
-            Insert-NativeReference -Reference $reference -TargetField $numberFields[[string]$reference.target]
+            $target = [string]$reference.target
+            if (-not $numberFields.ContainsKey($target)) {
+                $numberFields[$target] = Find-AnchoredNumberField -Id $target
+                $script:HeldComObjects.Add($numberFields[$target])
+            }
+            Insert-NativeReference -Reference $reference -TargetField $numberFields[$target]
         }
+        # The last session leaves no helper bookmarks in the user's document.
+        if (-not $AnchorNumbers) { Remove-Anchors }
         $script:Document.Fields.Update() | Out-Null
         $validation = Save-DocumentAtomically -Destination $output -Manifest $validationManifest
     }
@@ -1489,6 +1600,10 @@ function Get-ValidationReport {
     }
     if ($uninspectedRows -gt 0) {
         $warnings.Add("$uninspectedRows MathType object(s) sit in table rows whose height could not be inspected; check them for clipping.")
+    }
+    $anchors = Get-AnchorCount
+    if ($anchors -gt 0 -and -not $AnchorNumbers) {
+        $errors.Add("$anchors cross-session anchor bookmark(s) of an unfinished batched render remain.")
     }
 
     $numberFields = @()

@@ -366,6 +366,9 @@ class StaticContractTests(unittest.TestCase):
         self.assertNotIn("MainWindowHandle", bridge)
         slide = bridge[bridge.index("function Add-MathTypeEquationToSlide"):bridge.index("function Save-PresentationAtomically")]
         self.assertIn("[OfficeDesktop]::DescribeClipboardBlocker()", slide)
+        # The last session of a batched render leaves no helper bookmarks behind.
+        render = bridge[bridge.index("function Invoke-Render"):bridge.index("function Get-ValidationReport")]
+        self.assertIn("if (-not $AnchorNumbers) { Remove-Anchors }", render)
         self.assertIn("ConvertTo-Json -Depth 20 -Compress -EscapeHandling EscapeNonAscii", bridge)
         # The journal is written before the first temporary value and restored under the lock.
         set_temporary = bridge[bridge.index("function Set-TemporaryMathTypePreferences"):bridge.index("function Restore-MathTypePreferences")]

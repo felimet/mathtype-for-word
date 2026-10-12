@@ -103,8 +103,9 @@ TOOLS: list[dict[str, Any]] = [
                     "minimum": 0,
                     "default": 40,
                     "description": (
-                        "Unreferenced equations per Word session; referenced equations and all references always "
-                        "share the final session. 0 renders everything in one session."
+                        "Operations (every equation, then every reference) per Word session; a reference reaches a "
+                        "target numbered in an earlier session through a hidden bookmark. A resumed job keeps the "
+                        "batch_size it started with. 0 renders everything in one session."
                     ),
                 },
                 "resume": {
@@ -173,9 +174,10 @@ TOOLS: list[dict[str, Any]] = [
         "name": "get_mathtype_render_status",
         "description": (
             "Report a render_mathtype_word_document job by its output path: status (queued, running, completed, "
-            "failed, interrupted, none), equations done/total, chunks, retries, the last log lines and the final "
-            "result. Read-only unless cleanup=true, which deletes a completed, failed or interrupted job's state, "
-            "log and checkpoints; a cleaned failed or interrupted job cannot resume, and its next render starts over."
+            "failed, interrupted, none), equations and references done/total, chunks, retries, the last log lines "
+            "and the final result. Read-only unless cleanup=true, which deletes a completed, failed or interrupted "
+            "job's state, log and checkpoints; a cleaned failed or interrupted job cannot resume, and its next render "
+            "starts over."
         ),
         "inputSchema": {
             "type": "object",
@@ -563,6 +565,8 @@ def _invoke_bridge(action: str, arguments: dict[str, Any], timeout: int | None =
         command.append("-Overwrite")
     if arguments.get("partial_manifest"):
         command.append("-PartialManifest")
+    if arguments.get("anchor_numbers"):
+        command.append("-AnchorNumbers")
 
     effective_timeout = max(timeout or 0, _default_timeout())
     word_pids_before = _process_pids("WINWORD.EXE")

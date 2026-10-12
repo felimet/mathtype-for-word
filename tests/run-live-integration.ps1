@@ -62,12 +62,12 @@ try {
     if ((Get-DocumentXml -Path $outputPath).Contains($exactRow)) { throw 'The table row holding the equation still has an exact height.' }
     $validation = Assert-Validation -Path $outputPath -Label 'Single-session render'
 
-    # One equation per Word session: the unreferenced numbered equation is committed in an early chunk, and the
-    # referenced ones plus both references come last. Every chunk must validate and the output publish once.
+    # One operation per Word session: every equation in its own session, then each reference in a later one that
+    # reaches its target only through the anchor bookmark. Every chunk must validate and the output publish once.
     $batchOutput = & $python.Source $batch render --input $inputPath --output $batchedOutputPath --manifest $manifest --batch-size 1
     $batched = $batchOutput | Select-Object -Last 1 | ConvertFrom-Json
     if (-not $batched.ok) { throw "Batched render failed: $($batched.error)" }
-    if ($batched.chunks -lt 4) { throw "Expected the batched render to use several chunks; got $($batched.chunks)." }
+    if ($batched.chunks -ne 8) { throw "Expected one chunk per equation and reference (8); got $($batched.chunks)." }
     # This caller decodes with the console code page; ASCII JSON must still carry the CJK path intact.
     # Compare the CJK file name: the job runner reports a resolved path, which expands an 8.3 short %TEMP%.
     if ([IO.Path]::GetFileName($batched.output_path) -cne '分批 輸出.docx' -or -not (Test-Path -LiteralPath $batched.output_path)) {

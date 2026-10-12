@@ -27,12 +27,13 @@ The bridge refuses an existing output unless `overwrite` is explicitly true. A r
 
 ## Large documents
 
-One hidden Word session fails with RPC errors after a few hundred conversions, so `render_mathtype_word_document` renders a manifest with more than `batch_size` equations (default 40; `0` disables batching) as a job:
+One hidden Word session fails with RPC errors after a few hundred conversions, so `render_mathtype_word_document` renders a manifest with more than `batch_size` equations plus references (default 40; `0` disables batching) as a job:
 
-1. Equations that no reference targets render in chunks of `batch_size`, each in a fresh Word session that writes a checkpoint DOCX. Each chunk is validated as a partial manifest.
-2. Referenced numbered equations and all references render last, in one session that ignores `batch_size` and is never split, because MathType places a reference by clicking the live number field of its target. This session writes the real output and validates it strictly against the whole manifest before publishing it.
-3. Any other chunk that fails because its Word session broke down (RPC error, crash, a first timeout) is retried split in half; a second timeout in a row stops the job. Any other failure stops the job and names its cause. If the last chunk fails that way, resuming or lowering `batch_size` reruns the same chunk: keep referenced equations plus references well below a few hundred per document, or render the document in parts (for example per chapter).
-4. Calling render again with the same input, output, and manifest resumes after the last committed chunk. A changed input or manifest starts over.
+1. All equations, then all references, render in chunks of `batch_size` operations, each in a fresh Word session that writes a checkpoint DOCX and is validated as a partial manifest.
+2. MathType places a reference by clicking the live number field of its target. Every chunk but the last therefore marks each numbered equation's paragraph with a hidden bookmark (`_MTEq…`), and a reference rendered in a later session reaches its target through it.
+3. The last chunk removes those bookmarks, writes the real output, and validates it strictly against the whole manifest before publishing it.
+4. A chunk that fails because its Word session broke down (RPC error, crash, a first timeout) is retried split in half; a second timeout in a row stops the job. Any other failure stops the job and names its cause.
+5. Calling render again with the same input, output, and manifest resumes after the last committed chunk. A changed input or manifest starts over.
 
 The render result lists every equation whose paragraph line spacing or table row height changed (`line_spacing_changed_for`, `row_height_changed_for`, across all chunks) and every watchdog timeout with its process cleanup (`timeouts`).
 

@@ -50,7 +50,7 @@ Create real MathType equations in DOCX and PPTX, preserving MathType-native Word
 3. Scan the complete document twice. First inventory every equation candidate and later prose reference. Then classify each candidate as `inline`, `display`, or `display_numbered`, and each prose occurrence as `reference`, using [academic-equation-style.md](references/academic-equation-style.md). Decide every identifier, unique marker, TeX, layout, numbered state, reference marker, and target.
 4. Create a schema v1 JSON manifest. Read [workflow-and-schema.md](references/workflow-and-schema.md) for the exact contract and examples.
 5. For academic prose and mathematical typography, apply [academic-equation-style.md](references/academic-equation-style.md). A display equation must be introduced in the preceding prose and followed by “其中，” plus definitions of every symbol, index, superscript, subscript, unit, and physical meaning that is not already unambiguous. Audit the whole document so variables, vectors, matrices, functions, constants, indices, and units retain one consistent style.
-6. Call `render_mathtype_word_document`. Do not edit the same DOCX concurrently in Word. Manifests with more than `batch_size` (default 40) equations render in fresh Word sessions with checkpoints; when the render may outlast the client's tool-call time limit, pass `background: true` and poll `get_mathtype_render_status` while its status is `queued` or `running`, and stop on any other status. On `interrupted`, call render again with the same paths (and `background: true` again) to resume from the last checkpoint. On `failed`, read `error` first: a bad marker, TeX, or validation result needs a corrected manifest or document, which starts the job over.
+6. Call `render_mathtype_word_document`. Do not edit the same DOCX concurrently in Word. Manifests whose equations plus references exceed `batch_size` (default 40) render in fresh Word sessions with checkpoints; when the render may outlast the client's tool-call time limit, pass `background: true` and poll `get_mathtype_render_status` while its status is `queued` or `running`, and stop on any other status. On `interrupted`, call render again with the same paths (and `background: true` again) to resume from the last checkpoint. On `failed`, read `error` first: a bad marker, TeX, or validation result needs a corrected manifest or document, which starts the job over.
 7. Call `validate_mathtype_word_document` with the same manifest. A render is incomplete until validation returns `ok: true`.
 8. For complex fractions, matrices, aligned systems, accents, or nested scripts, open/render the result and visually inspect it. Structural checks cannot prove typographic correctness.
 9. Report the output path, counts, native number/reference mechanism, validation result, and any limitations.
@@ -89,7 +89,7 @@ python scripts\mathtype_batch.py status --output $outputDocx
 pwsh.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts\mathtype-word.ps1 -Action validate -InputPath $outputDocx -ManifestPath $manifestJson
 ```
 
-Without Python, `-Action render` on the bridge renders in one Word session; use it only for manifests of at most 40 equations. Every command prints one ASCII JSON line.
+Without Python, `-Action render` on the bridge renders in one Word session; use it only for manifests of at most 40 equations plus references. Every command prints one ASCII JSON line.
 
 ## Manifest decisions
 

@@ -5,15 +5,16 @@ One hidden Word session that converts a few hundred equations eventually fails w
 (0x800706BA / 0x800706BE), and one long call also outlives agent tool-call limits. A job therefore
 renders its manifest in chunks, each in a fresh Word session started by the bridge:
 
-* a manifest that fits in one batch is rendered exactly like a single bridge call;
-* non-final chunks run with -PartialManifest and write the next checkpoint DOCX in the job directory;
-* the final chunk holds every referenced numbered equation and every reference, because MathType
-  inserts a reference by clicking the live number field of its target in the same Word session. It
-  ignores batch_size, writes the real output, and validates it strictly against the complete manifest
-  before publishing;
-* any other chunk whose Word session broke down (RPC failure, crash, a first timeout) is retried split
-  in half; every other failure stops the job, and a failed or interrupted job resumes from its last
-  checkpoint when render is called again with the same input, manifest and output.
+* a manifest whose equations and references fit in one batch is rendered exactly like a single bridge call;
+* otherwise every equation, then every reference, is cut into chunks of batch_size operations. MathType
+  places a reference by clicking the number field of its target, so non-final chunks bookmark each numbered
+  paragraph (-AnchorNumbers) and a later session finds the target through that bookmark;
+* non-final chunks run with -PartialManifest and write the next checkpoint DOCX in the job directory; the
+  final chunk removes the bookmarks, writes the real output, and validates it strictly against the complete
+  manifest before publishing;
+* a chunk whose Word session broke down (RPC failure, crash, a first timeout) is retried split in half;
+  every other failure stops the job, and a failed or interrupted job resumes from its last checkpoint when
+  render is called again with the same input, manifest and output.
 
 Job state lives in %APPDATA%\\MathTypeForWordAgent\\jobs\\<hash of the output path>, never next to the
 user's files.
@@ -41,7 +42,7 @@ from typing import Any, Callable
 
 
 DEFAULT_BATCH_SIZE = 40
-STATE_SCHEMA = "mathtype-for-word-job/1"
+STATE_SCHEMA = "mathtype-for-word-job/2"
 ACTIVE_STATES = ("queued", "running")
 RESUMABLE_STATES = ("queued", "running", "failed", "interrupted")
 CHUNK_BASE_TIMEOUT_SECONDS = int(os.environ.get("MATHTYPE_CHUNK_BASE_TIMEOUT_SECONDS", "120"))
@@ -61,9 +62,11 @@ TIMEOUT_CLEANUP_KEYS = (
     "new_office_pids_left_running", "temporary_file_cleanup",
 )
 PUBLIC_STATE_KEYS = (
-    "status", "input", "output", "started", "updated", "equations_total", "equations_done",
-    "completed_chunks", "retries", "error", "failed_chunk", "pid", "timeouts",
+    "status", "input", "output", "started", "updated", "equations_total", "equations_done", "references_total",
+    "references_done", "completed_chunks", "retries", "error", "failed_chunk", "pid", "timeouts",
 )
+# Each chunk is a fresh bridge session that reports only its own repairs; the job keeps their union.
+REPAIR_KEYS = ("line_spacing_changed_for", "row_height_changed_for")
 # Windows refuses to replace or open state.json for a moment while another process (a status poll) reads it.
 IO_RETRIES = 10
 IO_RETRY_DELAY_SECONDS = 0.05
@@ -116,27 +119,40 @@ def job_dir(output_path: str) -> Path:
     return jobs_root() / key
 
 
-def plan_chunks(manifest: dict[str, Any], batch_size: int) -> list[list[str]]:
-    """Equation ids per chunk; referenced equations travel with the references in the last chunk."""
-    equations = [equation["id"] for equation in manifest["equations"]]
-    if batch_size <= 0 or len(equations) <= batch_size:
-        return [equations]
-    references = manifest.get("references") or []
-    targets = {reference["target"] for reference in references}
-    ordinary = [identifier for identifier in equations if identifier not in targets]
-    chunks = [ordinary[start:start + batch_size] for start in range(0, len(ordinary), batch_size)]
-    if references:
-        # ponytail: this chunk is never split, so a document with more than ~200 referenced equations
-        # plus references can still exhaust one Word session; anchor targets with bookmarks if that happens.
-        chunks.append([identifier for identifier in equations if identifier in targets])
-    return chunks
+def _chunk(operations: list[tuple[str, Any]]) -> dict[str, list[Any]]:
+    return {
+        "equations": [value for kind, value in operations if kind == "equation"],
+        "references": [value for kind, value in operations if kind == "reference"],
+    }
 
 
-def chunk_manifest(manifest: dict[str, Any], ids: list[str], include_references: bool) -> dict[str, Any]:
-    wanted = set(ids)
+def _operations(chunk: dict[str, list[Any]]) -> list[tuple[str, Any]]:
+    return [("equation", value) for value in chunk["equations"]] + [("reference", value) for value in chunk["references"]]
+
+
+def plan_chunks(manifest: dict[str, Any], batch_size: int) -> list[dict[str, list[Any]]]:
+    """Equation ids and reference indices per chunk. Every reference comes after every equation, so its target
+    is converted earlier in the same session or in an earlier, anchored one."""
+    operations = [("equation", equation["id"]) for equation in manifest["equations"]]
+    operations += [("reference", index) for index in range(len(manifest.get("references") or []))]
+    if batch_size <= 0 or len(operations) <= batch_size:
+        return [_chunk(operations)]
+    return [_chunk(operations[start:start + batch_size]) for start in range(0, len(operations), batch_size)]
+
+
+def split_chunk(chunk: dict[str, list[Any]]) -> list[dict[str, list[Any]]]:
+    operations = _operations(chunk)
+    half = len(operations) // 2
+    return [_chunk(operations[:half]), _chunk(operations[half:])]
+
+
+def chunk_manifest(manifest: dict[str, Any], chunk: dict[str, list[Any]]) -> dict[str, Any]:
+    wanted = set(chunk["equations"])
     part = {key: value for key, value in manifest.items() if key not in ("equations", "references")}
     part["equations"] = [equation for equation in manifest["equations"] if equation["id"] in wanted]
-    part["references"] = list(manifest.get("references") or []) if include_references else []
+    part["references"] = [(manifest.get("references") or [])[index] for index in chunk["references"]]
+    # Targets numbered in an earlier session; the bridge reaches them through their anchor bookmarks.
+    part["external_targets"] = sorted({reference["target"] for reference in part["references"]} - wanted)
     return part
 
 
@@ -286,6 +302,7 @@ def render(
     job.state = _read_json(job.state_path) or {}
     resuming = (
         resume
+        and job.state.get("schema") == STATE_SCHEMA
         and job.state.get("status") in RESUMABLE_STATES
         and all(job.state.get(key) == value for key, value in fingerprint.items())
         and bool(job.state.get("chunks"))
@@ -310,14 +327,14 @@ def render(
             "chunks": chunks,
             "completed_chunks": 0,
             "equations_done": 0,
+            "references_done": 0,
             "retries": 0,
-            "line_spacing_changed_for": [],
-            "row_height_changed_for": [],
+            **{key: [] for key in REPAIR_KEYS},
             "timeouts": [],
             "result": None,
         }
         shutil.copy2(source, job.checkpoint)
-        job.log(f"Started: {len(manifest['equations'])} equation(s) in {len(chunks)} chunk(s).")
+        job.log(f"Started: {len(manifest['equations'])} equation(s), {len(references)} reference(s) in {len(chunks)} chunk(s).")
     job.save(status="running", pid=os.getpid(), pid_started=process_started(os.getpid()), error=None, failed_chunk=None)
     try:
         return _run_chunks(job, bridge, manifest, source, output, manifest_file, overwrite, partial_manifest)
@@ -344,9 +361,9 @@ def _run_chunks(
     consecutive_timeouts = 0
     while True:
         index = job.state["completed_chunks"]
-        ids = job.state["chunks"][index]
+        chunk = job.state["chunks"][index]
         final = index == len(job.state["chunks"]) - 1
-        part = chunk_manifest(manifest, ids, include_references=final)
+        part = chunk_manifest(manifest, chunk)
         part_path = job.dir / f"chunk-{index + 1:03d}.json"
         _write_json(part_path, part)
         checkpoint = job.checkpoint
@@ -360,26 +377,30 @@ def _run_chunks(
                 partial_manifest=partial_manifest,
             )
         else:
-            arguments.update(output_path=str(next_checkpoint), overwrite=True, partial_manifest=True)
+            arguments.update(output_path=str(next_checkpoint), overwrite=True, partial_manifest=True, anchor_numbers=True)
         job.log(
-            f"Chunk {index + 1}/{len(job.state['chunks'])}: {len(ids)} equation(s), "
-            f"{len(part['references'])} reference(s)."
+            f"Chunk {index + 1}/{len(job.state['chunks'])}: {len(chunk['equations'])} equation(s), "
+            f"{len(chunk['references'])} reference(s)."
         )
-        operations = len(ids) + len(part["references"])
-        timeout = chunk_timeout(operations, job.state["equations_done"] + len(ids))
+        operations = len(_operations(chunk))
+        timeout = chunk_timeout(operations, job.state["equations_done"] + len(chunk["equations"]))
         started = time.monotonic()
         result = bridge("render", arguments, timeout=timeout)
         if result.get("ok"):
             consecutive_timeouts = 0
-            done = job.state["equations_done"] + len(ids)
-            # Each chunk is a fresh bridge session that reports only its own repairs; keep the union.
-            changed = [*job.state.get("line_spacing_changed_for", []), *(result.get("line_spacing_changed_for") or [])]
-            rows = [*job.state.get("row_height_changed_for", []), *(result.get("row_height_changed_for") or [])]
-            job.log(f"Chunk {index + 1} done in {time.monotonic() - started:.0f} s ({done}/{job.state['equations_total']}).")
+            progress = {
+                "completed_chunks": index + 1,
+                "equations_done": job.state["equations_done"] + len(chunk["equations"]),
+                "references_done": job.state.get("references_done", 0) + len(chunk["references"]),
+                **{key: [*job.state.get(key, []), *(result.get(key) or [])] for key in REPAIR_KEYS},
+            }
+            job.log(
+                f"Chunk {index + 1} done in {time.monotonic() - started:.0f} s "
+                f"({progress['equations_done']}/{job.state['equations_total']} equations, "
+                f"{progress['references_done']}/{len(references)} references)."
+            )
             if not final:
-                job.save(  # commit
-                    completed_chunks=index + 1, equations_done=done, line_spacing_changed_for=changed, row_height_changed_for=rows
-                )
+                job.save(**progress)  # commit
                 checkpoint.unlink(missing_ok=True)
                 continue
             summary = {
@@ -388,17 +409,13 @@ def _run_chunks(
                 "equations": len(manifest["equations"]),
                 "numbered_equations": sum(1 for equation in manifest["equations"] if equation.get("numbered")),
                 "references": len(references),
-                "line_spacing_changed_for": changed,
-                "row_height_changed_for": rows,
+                **{key: progress[key] for key in REPAIR_KEYS},
                 "chunks": len(job.state["chunks"]),
                 "retries": job.state["retries"],
                 "timeouts": job.state.get("timeouts", []),
             }
             job.save(
-                completed_chunks=index + 1,
-                equations_done=done,
-                line_spacing_changed_for=changed,
-                row_height_changed_for=rows,
+                **progress,
                 status="completed",
                 result={key: value for key, value in summary.items() if key != "validation"},
             )
@@ -415,12 +432,13 @@ def _run_chunks(
             job.save(timeouts=[*job.state.get("timeouts", []), {"chunk": index + 1, **cleanup}])
         consecutive_timeouts = consecutive_timeouts + 1 if TIMEOUT_SIGN in error else 0
         session_failure = any(sign in error for sign in SESSION_FAILURE_SIGNS)
-        splittable = len(ids) > 1 and not (final and references) and consecutive_timeouts < MAX_CONSECUTIVE_TIMEOUTS
+        splittable = len(_operations(chunk)) > 1 and consecutive_timeouts < MAX_CONSECUTIVE_TIMEOUTS
         if session_failure and splittable:
-            half = len(ids) // 2
-            job.state["chunks"][index:index + 1] = [ids[:half], ids[half:]]
+            halves = split_chunk(chunk)
+            job.state["chunks"][index:index + 1] = halves
             job.save(retries=job.state["retries"] + 1)
-            job.log(f"Retrying chunk {index + 1} split into {half} + {len(ids) - half} equation(s).")
+            sizes = " + ".join(str(len(_operations(half))) for half in halves)
+            job.log(f"Retrying chunk {index + 1} split into {sizes} operation(s).")
             continue
         job.save(status="failed", error=error, failed_chunk=index + 1)
         return {

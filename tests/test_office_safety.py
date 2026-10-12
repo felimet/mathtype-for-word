@@ -127,12 +127,14 @@ class TimeoutCleanupTests(unittest.TestCase):
     def test_batch_options_reach_the_bridge_switches(self) -> None:
         done = subprocess.CompletedProcess([], 0, stdout='{"ok": true}\n', stderr="")
         with mock.patch.object(mcp_server, "_run_bridge", return_value=done) as run:
-            mcp_server._invoke_bridge("render", {"partial_manifest": True, "validation_manifest_path": "C:\\m.json"})
+            mcp_server._invoke_bridge("render", {"partial_manifest": True, "anchor_numbers": True,
+                                                 "validation_manifest_path": "C:\\m.json"})
         command = run.call_args.args[0]
         self.assertIn("-PartialManifest", command)
+        self.assertIn("-AnchorNumbers", command)
         self.assertEqual(command[command.index("-ValidationManifestPath") + 1], "C:\\m.json")
         parameters = BRIDGE.read_text(encoding="utf-8").split("Set-StrictMode", 1)[0]
-        for name in ("$PartialManifest", "$ValidationManifestPath"):
+        for name in ("$PartialManifest", "$ValidationManifestPath", "$AnchorNumbers"):
             self.assertIn(name, parameters)
 
 
@@ -384,7 +386,7 @@ class BridgeHelperTests(unittest.TestCase):
                 "  $definition = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst]"
                 " -and $n.Name -eq $name }, $true)\n"
                 "  . ([scriptblock]::Create($definition.Extent.Text))\n}\n"
-                "foreach ($name in '$script:ClipboardAttempts',"
+                "foreach ($name in '$script:AnchorPrefix', '$script:ClipboardAttempts',"
                 " '$script:ClipboardRetryMilliseconds') {\n"
                 "  $assignment = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.AssignmentStatementAst]"
                 " -and $n.Left.Extent.Text -eq $name }, $true)\n"
@@ -397,6 +399,14 @@ class BridgeHelperTests(unittest.TestCase):
             )
         self.assertEqual(completed.returncode, 0, completed.stderr)
         return completed.stdout
+
+    def test_anchor_names_are_valid_hidden_word_bookmarks(self) -> None:
+        names = self.run_functions(("Get-AnchorName",), "Get-AnchorName -Id 'mass_energy'\nGet-AnchorName -Id '周家銘 式(1)'\n"
+                                   "Get-AnchorName -Id 'mass_energy'").splitlines()
+        self.assertEqual(names[0], names[2])  # stable across sessions
+        self.assertNotEqual(names[0], names[1])
+        for name in names:
+            self.assertRegex(name, r"^_MTEq[0-9a-f]{32}$")  # Word allows 40 letters, digits and underscores
 
     def test_a_briefly_held_clipboard_is_retried(self) -> None:
         # Fakes stand in for Word and PowerPoint: Paste fails twice, as while a clipboard manager holds the clipboard.
@@ -527,6 +537,33 @@ class ManifestNormalizationTests(unittest.TestCase):
             "equations": [{"id": "a", "marker": "{{MATH:a}}", "tex": "x", "layout": "display", "numbered": True}],
             "references": [{"marker": "{{EQREF:a}}", "target": "a"}],
         })
+
+    def test_every_planned_chunk_passes_the_bridge(self) -> None:
+        import mathtype_batch
+
+        equations = [{"id": f"e{i}", "marker": f"{{{{MATH:e{i}}}}}", "tex": "x", "layout": "display", "numbered": True}
+                     for i in range(1, 4)]
+        manifest = {"schema_version": 1, "equations": equations,
+                    "references": [{"marker": "{{EQREF:r1}}", "target": "e1"}, {"marker": "{{EQREF:r2}}", "target": "e3"}]}
+        for batch_size in (1, 4, 40):
+            for chunk in mathtype_batch.plan_chunks(manifest, batch_size):
+                with self.subTest(batch_size=batch_size, chunk=chunk):
+                    code, result = self.check(mathtype_batch.chunk_manifest(manifest, chunk))
+                    self.assertEqual(code, 0, result)
+
+    def test_references_may_target_numbered_equations_of_an_earlier_session(self) -> None:
+        equation = {"id": "a", "marker": "{{MATH:a}}", "tex": "x", "layout": "inline"}
+        manifest = {"schema_version": 1, "equations": [equation], "external_targets": ["z"],
+                    "references": [{"marker": "{{EQREF:z}}", "target": "z"}]}
+        code, result = self.check(manifest)
+        self.assertEqual(code, 0, result)
+        for expected, changes in (("Invalid external target", {"external_targets": ["a"]}),
+                                  ("external_targets must be an array", {"external_targets": "z"}),
+                                  ("Reference target does not exist", {"external_targets": []})):
+            with self.subTest(expected=expected):
+                code, result = self.check(dict(manifest, **changes))
+                self.assertEqual(code, 1)
+                self.assertIn(expected, result["error"])
 
     def test_presentation_equation_without_height_is_accepted(self) -> None:
         # The duplicate id fails validation after the first equation (no height_points) was read, and before

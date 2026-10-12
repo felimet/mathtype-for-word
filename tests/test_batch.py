@@ -34,24 +34,30 @@ class FakeBridge:
             return {"ok": True, "manifest": json.loads(Path(arguments["manifest_path"]).read_text(encoding="utf-8"))}
         assert action == "render" and timeout and timeout > 0
         part = json.loads(Path(arguments["manifest_path"]).read_text(encoding="utf-8"))
-        self.calls.append({**arguments, "ids": [equation["id"] for equation in part["equations"]]})
+        self.calls.append({**arguments, "ids": [equation["id"] for equation in part["equations"]],
+                           "refs": [reference["marker"] for reference in part["references"]],
+                           "external": part.get("external_targets", [])})
         if self.interrupt_on_call == len(self.calls):
             raise KeyboardInterrupt("simulated client kill")
         if len(self.calls) in self.fail:
             failure = self.fail[len(self.calls)]  # an error message, or a whole bridge result (watchdog timeout)
             return failure if isinstance(failure, dict) else {"ok": False, "error": failure}
-        # Assert-Manifest: MathType places a reference by clicking its target's number in the same session.
-        ids = {equation["id"] for equation in part["equations"]}
-        missing = [reference["target"] for reference in part["references"] if reference["target"] not in ids]
-        if missing:
-            return {"ok": False, "error": f"Reference target does not exist: {missing[0]}"}
+        # Assert-Manifest and Find-AnchoredNumberField: MathType places a reference by clicking its target's
+        # number, converted in this session or anchored by an earlier one.
         document = json.loads(Path(arguments["input_path"]).read_text(encoding="utf-8"))
+        numbered = {equation["id"] for equation in part["equations"] if equation.get("numbered")}
+        reachable = numbered | (set(part.get("external_targets", [])) & set(document["anchors"]))
+        missing = [reference["target"] for reference in part["references"] if reference["target"] not in reachable]
+        if missing:
+            return {"ok": False, "error": f"Reference target '{missing[0]}' was not numbered in an earlier session."}
         for equation in part["equations"]:
             document["markers"].remove(equation["marker"])  # ValueError = marker not exactly once
             document["numbers"] += 1 if equation.get("numbered") else 0
         for reference in part["references"]:
             document["markers"].remove(reference["marker"])
             document["references"] += 1
+        # -AnchorNumbers bookmarks this session's numbered paragraphs; a session without it removes every anchor.
+        document["anchors"] = sorted(set(document["anchors"]) | numbered) if arguments.get("anchor_numbers") else []
         check = json.loads(Path(arguments.get("validation_manifest_path") or arguments["manifest_path"]).read_text(encoding="utf-8"))
         expected_numbers = sum(1 for equation in check["equations"] if equation.get("numbered"))
         expected_references = len(check.get("references") or [])
@@ -93,7 +99,8 @@ class BatchTests(unittest.TestCase):
                                             ensure_ascii=False), encoding="utf-8")
         markers = [equation["marker"] for equation in equations] + [references[0]["marker"]]
         self.source = self.tmp / "輸入 文件.docx"
-        self.source.write_text(json.dumps({"markers": markers, "numbers": 0, "references": 0}), encoding="utf-8")
+        self.source.write_text(json.dumps({"markers": markers, "numbers": 0, "references": 0, "anchors": []}),
+                               encoding="utf-8")
         self.output = self.tmp / "輸出.docx"
 
     def tearDown(self) -> None:
@@ -109,29 +116,40 @@ class BatchTests(unittest.TestCase):
 
     def test_small_manifest_is_one_classic_session(self) -> None:
         manifest = json.loads(self.manifest.read_text(encoding="utf-8"))
-        self.assertEqual(mathtype_batch.plan_chunks(manifest, 40), [[f"e{i}" for i in range(1, 11)]])
-        self.assertEqual(len(mathtype_batch.plan_chunks(manifest, 0)), 1)
+        everything = {"equations": [f"e{i}" for i in range(1, 11)], "references": [0]}
+        self.assertEqual(mathtype_batch.plan_chunks(manifest, 40), [everything])
+        self.assertEqual(mathtype_batch.plan_chunks(manifest, 0), [everything])
 
-    def test_referenced_equations_travel_with_references_in_the_last_chunk(self) -> None:
+    def test_references_follow_every_equation_in_chunks_of_batch_size(self) -> None:
         manifest = json.loads(self.manifest.read_text(encoding="utf-8"))
         chunks = mathtype_batch.plan_chunks(manifest, 4)
-        self.assertEqual(chunks, [["e1", "e2", "e3", "e4"], ["e5", "e6", "e7", "e8"], ["e10"], ["e9"]])
+        self.assertEqual(chunks, [
+            {"equations": ["e1", "e2", "e3", "e4"], "references": []},
+            {"equations": ["e5", "e6", "e7", "e8"], "references": []},
+            {"equations": ["e9", "e10"], "references": [0]},
+        ])
+        self.assertEqual(mathtype_batch.split_chunk(chunks[2]),
+                         [{"equations": ["e9"], "references": []}, {"equations": ["e10"], "references": [0]}])
 
     def test_numbered_equations_across_chunks_render_and_publish_only_after_strict_validation(self) -> None:
         bridge = FakeBridge()
         result = self.render(bridge)
         self.assertTrue(result["ok"], result)
-        self.assertEqual(result["chunks"], 4)
+        self.assertEqual(result["chunks"], 3)
         self.assertEqual(result["input_path"], str(self.source.resolve()))
         for call in bridge.calls[:-1]:
             self.assertTrue(call["partial_manifest"])
+            self.assertTrue(call["anchor_numbers"])
             self.assertNotIn("validation_manifest_path", call)
             self.assertNotEqual(Path(call["output_path"]), self.output.resolve())
         final = bridge.calls[-1]
         self.assertFalse(final["partial_manifest"])
+        self.assertNotIn("anchor_numbers", final)
         self.assertEqual(final["validation_manifest_path"], str(self.manifest.resolve()))
         self.assertEqual(Path(final["output_path"]), self.output.resolve())
-        self.assertEqual(json.loads(self.output.read_text(encoding="utf-8"))["numbers"], 3)
+        published = json.loads(self.output.read_text(encoding="utf-8"))
+        self.assertEqual((published["numbers"], published["references"], published["anchors"]), (3, 1, []))
+        self.assertEqual(result["row_height_changed_for"], ["e2"])
         state = json.loads(mathtype_batch.Job(self.output.resolve()).state_path.read_text(encoding="utf-8"))
         self.assertEqual(state["pid_started"], mathtype_batch.process_started(os.getpid()))
         status = mathtype_batch.status(str(self.output), cleanup=True)
@@ -139,11 +157,11 @@ class BatchTests(unittest.TestCase):
         self.assertTrue(status["cleaned_up"])
 
     def test_failed_final_validation_publishes_nothing(self) -> None:
-        bridge = FakeBridge(fail={4: "Generated DOCX validation failed: Equation numbers are not sequential"})
+        bridge = FakeBridge(fail={3: "Generated DOCX validation failed: Equation numbers are not sequential"})
         result = self.render(bridge)
         self.assertFalse(result["ok"])
         self.assertFalse(self.output.exists())
-        self.assertEqual(len(bridge.calls), 4)  # deterministic failure: no split retries
+        self.assertEqual(len(bridge.calls), 3)  # deterministic failure: no split retries
 
     def test_session_failure_is_split_and_job_completes(self) -> None:
         bridge = FakeBridge(fail={1: "The RPC server is unavailable. (0x800706BA)"})
@@ -167,7 +185,7 @@ class BatchTests(unittest.TestCase):
         bridge = FakeBridge()
         result = self.render(bridge)
         self.assertTrue(result["ok"], result)
-        self.assertEqual([call["ids"] for call in bridge.calls], [["e10"], ["e9"]])
+        self.assertEqual([call["ids"] for call in bridge.calls], [["e9", "e10"]])
         # Repairs reported by the chunks committed before the interruption survive the resume.
         self.assertEqual(sorted(result["line_spacing_changed_for"]), sorted(f"e{i}" for i in range(1, 11)))
 
@@ -202,15 +220,32 @@ class BatchTests(unittest.TestCase):
         document["markers"].append(marker)
         self.source.write_text(json.dumps(document), encoding="utf-8")
 
-    def test_final_chunk_with_references_is_never_split(self) -> None:
+    def test_final_chunk_splits_and_its_references_reach_anchored_targets(self) -> None:
+        # e3 and e9 are numbered in earlier sessions; after the split, both references sit in a session of their
+        # own and reach their targets only through the anchors.
         self.add_reference("{{EQREF:r2}}", "e3")
         bridge = FakeBridge(fail={3: "The RPC server is unavailable. (0x800706BA)"})
-        self.assertFalse(self.render(bridge)["ok"])
-        self.assertEqual([call["ids"] for call in bridge.calls],
-                         [["e1", "e2", "e4", "e5"], ["e6", "e7", "e8", "e10"], ["e3", "e9"]])
-        resumed = FakeBridge()
-        self.assertTrue(self.render(resumed)["ok"])
-        self.assertEqual([call["ids"] for call in resumed.calls], [["e3", "e9"]])
+        result = self.render(bridge)
+        self.assertTrue(result["ok"], result)
+        self.assertEqual([(call["ids"], call["refs"]) for call in bridge.calls[2:]], [
+            (["e9", "e10"], ["{{EQREF:r1}}", "{{EQREF:r2}}"]),
+            (["e9", "e10"], []),
+            ([], ["{{EQREF:r1}}", "{{EQREF:r2}}"]),
+        ])
+        self.assertEqual(bridge.calls[-1]["external"], ["e3", "e9"])
+        published = json.loads(self.output.read_text(encoding="utf-8"))
+        self.assertEqual((published["references"], published["anchors"]), (2, []))
+
+    def test_references_fail_without_anchors_from_earlier_sessions(self) -> None:
+        class NoAnchors(FakeBridge):
+            def __call__(self, action, arguments, timeout=None):
+                arguments.pop("anchor_numbers", None)
+                return super().__call__(action, arguments, timeout)
+
+        self.add_reference("{{EQREF:r2}}", "e3")  # e3 is numbered two sessions before its reference
+        result = self.render(NoAnchors())
+        self.assertFalse(result["ok"])
+        self.assertIn("was not numbered in an earlier session", result["error"])
 
     def test_changed_manifest_or_input_restarts_instead_of_resuming(self) -> None:
         def edit_manifest() -> None:
@@ -231,10 +266,23 @@ class BatchTests(unittest.TestCase):
                 self.assertTrue(self.render(bridge, overwrite=True)["ok"])
                 self.assertEqual(bridge.calls[0]["ids"], ["e1", "e2", "e3", "e4"])
 
+    def test_state_from_an_older_schema_is_replanned_not_resumed(self) -> None:
+        with self.assertRaises(KeyboardInterrupt):
+            self.render(FakeBridge(interrupt_on_call=2))
+        state_path = mathtype_batch.Job(self.output.resolve()).state_path
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        # job/1 layout: chunks were plain id lists, with referenced targets held back for the last chunk.
+        state.update(schema="mathtype-for-word-job/1",
+                     chunks=[["e1", "e2", "e4", "e5"], ["e6", "e7", "e8", "e10"], ["e3", "e9"]])
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+        bridge = FakeBridge()
+        result = self.render(bridge)
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(bridge.calls[0]["ids"], ["e1", "e2", "e3", "e4"])  # replanned from scratch
+
     def test_line_spacing_repairs_accumulate_across_chunks(self) -> None:
         result = self.render(FakeBridge())
         self.assertEqual(sorted(result["line_spacing_changed_for"]), sorted(f"e{i}" for i in range(1, 11)))
-        self.assertEqual(result["row_height_changed_for"], ["e2"])
 
     def test_repeated_timeouts_stop_after_one_split(self) -> None:
         timeout = {"ok": False, "error": "Word/MathType bridge timed out after 240 seconds.",
