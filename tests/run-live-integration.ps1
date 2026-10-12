@@ -11,6 +11,31 @@ $inputPath = Join-Path $testDirectory 'input.docx'
 $outputPath = Join-Path $testDirectory 'output.docx'
 $baselineWordPids = @(Get-Process WINWORD -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id)
 
+function Assert-Validation {
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$Label)
+    $output = & pwsh.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $bridge `
+        -Action validate -InputPath $Path -ManifestPath $manifest
+    $validation = $output | Select-Object -Last 1 | ConvertFrom-Json
+    if (-not $validation.ok) { throw "$Label validation failed: $($validation.errors -join '; ')" }
+    if ($validation.counts.mathtype_objects -ne 6) { throw "$Label expected exactly six MathType objects." }
+    if ($validation.counts.native_number_fields -ne 3) { throw "$Label expected exactly three native number fields." }
+    if ($validation.counts.native_reference_fields -ne 2) { throw "$Label expected exactly two native reference fields." }
+    if (($validation.equation_numbers -join ',') -ne '1,2,3') { throw "$Label expected equation numbers 1,2,3." }
+    if (@($validation.warnings | Where-Object { $_ -match 'clipped' }).Count -gt 0) { throw "$Label left a clipped equation." }
+    return $validation
+}
+
+function Get-DocumentXml {
+    param([Parameter(Mandatory)][string]$Path)
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $archive = [IO.Compression.ZipFile]::OpenRead($Path)
+    try {
+        $reader = [IO.StreamReader]::new($archive.GetEntry('word/document.xml').Open())
+        try { return $reader.ReadToEnd() } finally { $reader.Dispose() }
+    }
+    finally { $archive.Dispose() }
+}
+
 try {
     New-Item -ItemType Directory -Path $testDirectory | Out-Null
     & (Join-Path $PSScriptRoot 'create-live-fixture.ps1') -OutputPath $inputPath
@@ -20,15 +45,12 @@ try {
         -Action render -InputPath $inputPath -OutputPath $outputPath -ManifestPath $manifest
     $render = $renderOutput | Select-Object -Last 1 | ConvertFrom-Json
     if (-not $render.ok) { throw "Render failed: $($render.error)" }
-
-    $validationOutput = & pwsh.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $bridge `
-        -Action validate -InputPath $outputPath -ManifestPath $manifest
-    $validation = $validationOutput | Select-Object -Last 1 | ConvertFrom-Json
-    if (-not $validation.ok) { throw "Validation failed: $($validation.errors -join '; ')" }
-    if ($validation.counts.mathtype_objects -ne 3) { throw 'Expected exactly three MathType objects.' }
-    if ($validation.counts.native_number_fields -ne 2) { throw 'Expected exactly two native number fields.' }
-    if ($validation.counts.native_reference_fields -ne 2) { throw 'Expected exactly two native reference fields.' }
-    if (($validation.equation_numbers -join ',') -ne '1,2') { throw 'Expected equation numbers 1,2.' }
+    if (@($render.line_spacing_changed_for) -notcontains 'clipped_fraction') { throw 'The exactly spaced paragraph was not switched to at-least spacing.' }
+    # An at-least line inside the document grid still snaps to the grid pitch; the repair must leave the grid.
+    $gridOff = '<w:snapToGrid w:val="0"/>'
+    if ((Get-DocumentXml -Path $inputPath).Contains($gridOff)) { throw 'The fixture already leaves the document grid.' }
+    if (-not (Get-DocumentXml -Path $outputPath).Contains($gridOff)) { throw 'The repaired paragraph still snaps to the document grid.' }
+    $validation = Assert-Validation -Path $outputPath -Label 'Single-session render'
 
     [ordered]@{
         ok = $true

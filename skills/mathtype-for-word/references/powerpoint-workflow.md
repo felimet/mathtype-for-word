@@ -8,6 +8,8 @@ MathType's Word-only `MTPlaceRef`, `SEQ MTEqn`, `MTReference`, and `GOTOBUTTON/R
 
 This is silent COM/OLE automation. Word, PowerPoint, and MathType remain hidden, and the bridge does not use mouse, keyboard, focus, `AppActivate`, or `SendKeys`. It briefly uses the Windows clipboard to transfer the OLE object, then validates the returned MathML before saving the PPTX.
 
+PowerPoint runs as a single instance, so the bridge attaches to the user's PowerPoint when it is already open. It refuses a presentation the user already has open, closes only its own presentation, and leaves PowerPoint running; it quits only an instance it launched itself that holds no other presentation.
+
 ## Presentation manifest schema v1
 
 ```json
@@ -30,7 +32,7 @@ Rules:
 - Use unique stable ASCII IDs.
 - Supply one-line MathType-compatible `tex` for silent creation and one complete Presentation MathML `<math>` element for independent validation. Verify that both encode the same operators, scripts, fractions, radicals, accents, and identifiers.
 - Put each marker alone in one top-level text box. Grouped markers and markers embedded in prose are rejected.
-- Set `height_points` between 12 and 200. Omit it to use 32 points.
+- Set `height_points` between 12 and 200. Omit it (or set it to `null`) to use 32 points.
 - Keep descriptive prose in separate text boxes above and below the marker.
 
 ## Direct bridge commands

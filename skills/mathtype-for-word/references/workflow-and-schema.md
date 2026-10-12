@@ -15,14 +15,14 @@ The bridge performs a deterministic transaction:
 1. Open the input DOCX in an isolated hidden Word instance.
 2. Require every marker to occur exactly once.
 3. Replace equation markers with TeX delimited for MathType Toggle TeX.
-4. Require exactly one new `Equation.DSMT4` object per equation.
+4. Require exactly one new `Equation.DSMT4` object per equation. When the paragraph has exact line spacing lower than the new object, switch it to at-least spacing with the same value and stop it snapping to the document line grid, which exact spacing ignored (`exact_line_spacing`).
 5. For numbered displays, call MathType's native number command and normalize its native fields to `(n)`.
 6. Replace reference markers through MathType's `MTReference` and `MTPlaceRef` workflow.
 7. Update Word fields.
-8. Save to a temporary sibling file and atomically move it to the output path.
-9. Reopen read-only and validate.
+8. Save to a temporary sibling file, reopen it read-only, and validate it.
+9. Move it atomically to the output path only when validation passes.
 
-The bridge refuses an existing output unless `overwrite` is explicitly true.
+The bridge refuses an existing output unless `overwrite` is explicitly true. Each editing bridge call (a Word render, `render-pptx`, `configure-defaults`) holds a per-Windows-session lock (`Local\` namespace) and waits up to 30 seconds (`MATHTYPE_BRIDGE_LOCK_WAIT_SECONDS`) for it; `update` only refreshes Word fields and does not take the lock.
 
 ## Schema v1
 
@@ -50,8 +50,10 @@ The bridge refuses an existing output unless `overwrite` is explicitly true.
 Rules:
 
 - `schema_version` must equal `1`.
-- `equations` is required. `references` may be empty.
-- `id` values are unique and case-sensitive.
+- `equations` is required. `references` may be empty or omitted.
+- `numbered` defaults to `false` when omitted.
+- Optional top-level `exact_line_spacing`: `"at_least"` (default) or `"keep"`. With `"keep"`, an equation taller than its paragraph's exact line spacing stays clipped and validation reports a warning.
+- `id` values are unique, case-sensitive JSON strings; a reference `target` is the same string.
 - All equation and reference markers are unique across the manifest.
 - A marker occurs exactly once in the DOCX.
 - `tex` is non-empty and contains no newline.

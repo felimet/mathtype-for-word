@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)]
-    [ValidateSet('probe', 'probe-pptx', 'configure-defaults', 'render', 'validate', 'update', 'render-pptx', 'validate-pptx', 'cleanup')]
+    [ValidateSet('probe', 'probe-pptx', 'configure-defaults', 'check-manifest', 'render', 'validate', 'update', 'render-pptx', 'validate-pptx', 'cleanup')]
     [string]$Action,
 
     [string]$InputPath,
@@ -14,20 +14,46 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+# A caller that pipes stderr (the MCP server) decodes the log as UTF-8; the ANSI code page (cp950, GBK,
+# Shift-JIS) would garble CJK paths. Only the redirected stream changes: the console code page belongs to the
+# caller's shared console. The JSON result line is ASCII-escaped (Write-JsonResult) for any caller code page.
+if ([Console]::IsErrorRedirected) {
+    $script:ErrorWriter = [IO.StreamWriter]::new([Console]::OpenStandardError(), [System.Text.UTF8Encoding]::new($false))
+    $script:ErrorWriter.AutoFlush = $true
+    [Console]::SetError($script:ErrorWriter)
+}
 
 $script:PluginRoot = Split-Path -Parent $PSScriptRoot
 $script:PackagedDefaultsPath = Join-Path $script:PluginRoot 'config\defaults.json'
 $script:UserConfigDirectory = Join-Path $env:APPDATA 'MathTypeForWordAgent'
 $script:UserDefaultsPath = Join-Path $script:UserConfigDirectory 'defaults.json'
+# The user's warning preferences while a render holds temporary values; a killed bridge leaves it for the next one.
+$script:WarningJournalPath = Join-Path $script:UserConfigDirectory 'warning-preferences.json'
+# Office processes a lock holder launched; it exists after a run only if that bridge died before its finally.
+$script:OfficeJournalPath = Join-Path $script:UserConfigDirectory 'office-processes.json'
+$script:LaunchedOffice = [System.Collections.Generic.List[object]]::new()
 $script:WordCommandsKey = 'HKCU:\Software\Design Science\DSMT7\WordCommands'
 $script:Word = $null
+$script:WordOriginalAlerts = $null
 $script:Document = $null
 $script:Selection = $null
 $script:PowerPoint = $null
+$script:PowerPointOwned = $false
+$script:PowerPointOriginalAlerts = $null
 $script:Presentation = $null
 $script:HeldComObjects = [System.Collections.Generic.List[object]]::new()
-$script:OriginalNumberWarning = $null
-$script:OriginalReferenceWarning = $null
+# MathType's Word macros show a modal dialog unless these read "1": first-number warning, reference prompt, and
+# the slow field-update notice (shown when a whole-document update takes over 2 s, i.e. in large documents).
+$script:WarningPreferenceNames = @('NoEqnNumWarningDlg', 'NoInsertEqnRefDlg', 'NoSlowUpdateEqnDlg')
+$script:OriginalWarningPreferences = $null
+$script:BridgeMutexName = 'Local\MathTypeForWordAgentBridge'
+$script:BridgeMutex = $null
+$script:BridgeLockWaitSeconds = if ($env:MATHTYPE_BRIDGE_LOCK_WAIT_SECONDS) { [int]$env:MATHTYPE_BRIDGE_LOCK_WAIT_SECONDS } else { 30 }
+$script:WdLineSpaceAtLeast = 3
+$script:WdLineSpaceExactly = 4
+# Word draws an exactly spaced line at its nominal height; allow rounding before calling an object clipped.
+$script:LineSpacingTolerancePoints = 0.5
+$script:LineSpacingRepairs = [System.Collections.Generic.List[string]]::new()
 $script:AutomationPollMilliseconds = 250
 $script:AutomationTimeoutMilliseconds = if ($env:MATHTYPE_AUTOMATION_TIMEOUT_MS) {
     [int]$env:MATHTYPE_AUTOMATION_TIMEOUT_MS
@@ -107,12 +133,70 @@ function Write-Log {
         [Parameter(Mandatory)]
         [string]$Message
     )
-    [Console]::Error.WriteLine("[$Level] $Message")
+    [Console]::Error.WriteLine("[$([DateTime]::Now.ToString('s'))] [$Level] $Message")
+}
+
+function Enter-BridgeLock {
+    # One editing job at a time: concurrent bridges race on the MathType warning preferences, the clipboard
+    # used for PowerPoint, and MathType's own state.
+    $script:BridgeMutex = [Threading.Mutex]::new($false, $script:BridgeMutexName)
+    try { $acquired = $script:BridgeMutex.WaitOne([TimeSpan]::FromSeconds($script:BridgeLockWaitSeconds)) }
+    catch [Threading.AbandonedMutexException] { $acquired = $true } # the previous holder died; the lock is ours
+    if (-not $acquired) {
+        $script:BridgeMutex.Dispose()
+        $script:BridgeMutex = $null
+        throw "Another MathType Office job is still running after $($script:BridgeLockWaitSeconds) s; retry when it has finished."
+    }
+    Stop-OrphanedOffice
+    Restore-JournaledPreferences
+}
+
+function Exit-BridgeLock {
+    if ($null -eq $script:BridgeMutex) { return }
+    # Reached after Stop-PowerPoint and Stop-Word: nothing journaled is left for the next holder to end.
+    Remove-Item -LiteralPath $script:OfficeJournalPath -ErrorAction SilentlyContinue
+    $script:BridgeMutex.ReleaseMutex()
+    $script:BridgeMutex.Dispose()
+    $script:BridgeMutex = $null
+}
+
+function Add-LaunchedOffice {
+    param([Parameter(Mandatory)][Diagnostics.Process]$Process)
+    # Only a lock holder journals. A bridge killed with its server (job object) never reaches its finally, and the
+    # Office it launched through DCOM is outside that job; the next lock holder ends it (Stop-OrphanedOffice).
+    if ($null -eq $script:BridgeMutex) { return }
+    $script:LaunchedOffice.Add([ordered]@{ pid = $Process.Id; start = $Process.StartTime.ToFileTimeUtc() })
+    New-Item -ItemType Directory -Path $script:UserConfigDirectory -Force | Out-Null
+    ConvertTo-Json -InputObject @($script:LaunchedOffice) -Compress | Set-Content -LiteralPath $script:OfficeJournalPath -Encoding utf8
+}
+
+function Stop-OrphanedOffice {
+    # Runs under the bridge lock. A failure here only leaves a hidden process running; it must never block the job.
+    if (-not (Test-Path -LiteralPath $script:OfficeJournalPath)) { return }
+    $entries = @()
+    try { $entries = @(Get-Content -Raw -LiteralPath $script:OfficeJournalPath | ConvertFrom-Json | Where-Object { $null -ne $_ }) }
+    catch { Write-Log -Level WARN -Message "Ignored an unreadable Office process journal: $($_.Exception.Message)" }
+    foreach ($entry in $entries) {
+        try {
+            $process = Get-Process -Id ([int]$entry.pid) -ErrorAction SilentlyContinue
+            # Another start time means a reused PID; a visible main window means the user took the instance over.
+            if ($null -eq $process -or $process.StartTime.ToFileTimeUtc() -ne [long]$entry.start) { continue }
+            if ($process.MainWindowHandle -ne [IntPtr]::Zero) {
+                Write-Log -Level WARN -Message "Left $($process.ProcessName) $($process.Id) from an interrupted run running: it shows a window."
+                continue
+            }
+            Stop-Process -Id $process.Id -Force
+            Write-Log -Level WARN -Message "Ended hidden $($process.ProcessName) $($process.Id) left by an interrupted run."
+        }
+        catch { Write-Log -Level WARN -Message "Could not end an Office process left by an interrupted run: $($_.Exception.Message)" }
+    }
+    Remove-Item -LiteralPath $script:OfficeJournalPath -Force
 }
 
 function Write-JsonResult {
     param([Parameter(Mandatory)]$Value)
-    $Value | ConvertTo-Json -Depth 20 -Compress
+    # ASCII escapes keep the JSON line valid for callers that decode with any code page.
+    $Value | ConvertTo-Json -Depth 20 -Compress -EscapeHandling EscapeNonAscii
 }
 
 function Resolve-ExistingFile {
@@ -203,7 +287,15 @@ function Start-Word {
     param([switch]$ReadOnly, [string]$DocumentPath)
     $before = @(Get-Process WINWORD -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id)
     $script:Word = New-Object -ComObject Word.Application
+    # Log the PID before Open/Toggle TeX, where hangs happen: the MCP timeout watchdog terminates only logged PIDs.
+    $newProcesses = @(Get-Process WINWORD -ErrorAction SilentlyContinue | Where-Object { $before -notcontains $_.Id })
+    if ($newProcesses.Count -eq 1) {
+        Write-Log -Level INFO -Message "WORD_PID=$($newProcesses[0].Id)"
+        Add-LaunchedOffice $newProcesses[0]
+    }
+    elseif ($newProcesses.Count -gt 1) { Write-Log -Level WARN -Message "Multiple new Word PIDs observed: $($newProcesses.Id -join ', ')" }
     $script:Word.Visible = $false
+    $script:WordOriginalAlerts = $script:Word.DisplayAlerts
     $script:Word.DisplayAlerts = 0
     if ([string]::IsNullOrWhiteSpace($DocumentPath)) {
         $script:Document = $script:Word.Documents.Add()
@@ -211,27 +303,50 @@ function Start-Word {
     else {
         $script:Document = $script:Word.Documents.Open($DocumentPath, $false, [bool]$ReadOnly)
     }
-    $newProcesses = @(Get-Process WINWORD -ErrorAction SilentlyContinue | Where-Object { $before -notcontains $_.Id })
-    if ($newProcesses.Count -eq 1) { Write-Log -Level INFO -Message "WORD_PID=$($newProcesses[0].Id)" }
-    elseif ($newProcesses.Count -gt 1) { Write-Log -Level WARN -Message "Multiple new Word PIDs observed: $($newProcesses.Id -join ', ')" }
     $script:Selection = $script:Word.Selection
+}
+
+function Connect-PowerPoint {
+    # PowerPoint is single-instance: COM attaches to the user's PowerPoint when one is running. Only an instance
+    # this bridge launched may be quit, and an attached instance gets its alert setting back.
+    if ($null -ne $script:PowerPoint) { return }
+    $before = @(Get-Process POWERPNT -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id)
+    $script:PowerPoint = New-Object -ComObject PowerPoint.Application
+    $launched = @(Get-Process POWERPNT -ErrorAction SilentlyContinue | Where-Object { $before -notcontains $_.Id })
+    $script:PowerPointOwned = $launched.Count -eq 1
+    if ($script:PowerPointOwned) {
+        Write-Log -Level INFO -Message "POWERPOINT_PID=$($launched[0].Id)"
+        Add-LaunchedOffice $launched[0]
+    }
+    else { Write-Log -Level INFO -Message 'Attached to a PowerPoint instance that was already running; it will be left running.' }
+    $script:PowerPointOriginalAlerts = $script:PowerPoint.DisplayAlerts
+    $script:PowerPoint.DisplayAlerts = 1
 }
 
 function Start-PowerPoint {
     param([Parameter(Mandatory)][string]$PresentationPath, [switch]$ReadOnly)
-    $before = @(Get-Process POWERPNT -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id)
-    $script:PowerPoint = New-Object -ComObject PowerPoint.Application
-    $script:PowerPoint.DisplayAlerts = 1
+    Connect-PowerPoint
+    # In the user's instance, Open may hand back a presentation the user is editing, and closing it would discard
+    # unsaved work. Refuse instead of touching it.
+    $target = [IO.Path]::GetFullPath($PresentationPath)
+    $targetName = [IO.Path]::GetFileName($target)
+    foreach ($open in @($script:PowerPoint.Presentations)) {
+        $openPath = [string]$open.FullName
+        $openName = [string]$open.Name
+        Release-ComObject $open
+        # A OneDrive/SharePoint-synced file reports an https FullName instead of the local path that opened it.
+        # ponytail: cloud files match by name only, so another open cloud deck of the same name is refused too.
+        $sameCloudFile = $openPath -match '^https?://' -and [string]::Equals($openName, $targetName, [StringComparison]::OrdinalIgnoreCase)
+        if ($sameCloudFile -or [string]::Equals($openPath, $target, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "The presentation is already open in PowerPoint; save and close it, then retry: $target"
+        }
+    }
     $script:Presentation = $script:PowerPoint.Presentations.Open(
         $PresentationPath,
         [bool]$ReadOnly,
         $false,
         $false
     )
-    $newProcesses = @(Get-Process POWERPNT -ErrorAction SilentlyContinue | Where-Object { $before -notcontains $_.Id })
-    if ($newProcesses.Count -eq 1) {
-        Write-Log -Level INFO -Message "POWERPOINT_PID=$($newProcesses[0].Id)"
-    }
 }
 
 function Stop-Word {
@@ -242,8 +357,22 @@ function Stop-Word {
         }
     }
     if ($null -ne $script:Word) {
-        try { $script:Word.Quit() } catch {
-            Write-Log -Level WARN -Message "Could not quit Word cleanly: $($_.Exception.Message)"
+        $userWindows = $false
+        try {
+            # A file the user opens while this hidden automation instance runs can land in it and make it visible.
+            $remaining = [int]$script:Word.Documents.Count + [int]$script:Word.ProtectedViewWindows.Count
+            $userWindows = $remaining -gt 0 -and [bool]$script:Word.Visible
+        }
+        catch { Write-Log -Level WARN -Message "Could not inspect Word before quitting: $($_.Exception.Message)" }
+        if ($userWindows) {
+            try { $script:Word.DisplayAlerts = $script:WordOriginalAlerts } catch {}
+            Write-Log -Level WARN -Message 'Left Word running: the user opened a document in the bridge instance.'
+        }
+        else {
+            # Only hidden bridge documents can remain; never let a save prompt decide their fate.
+            try { $script:Word.Quit(0) } catch {
+                Write-Log -Level WARN -Message "Could not quit Word cleanly: $($_.Exception.Message)"
+            }
         }
     }
     foreach ($value in $script:HeldComObjects) { Release-ComObject $value }
@@ -258,53 +387,140 @@ function Stop-Word {
     [GC]::WaitForPendingFinalizers()
 }
 
+function Close-Presentation {
+    # A failed Close keeps the reference and throws: the caller sees the real cause, and Stop-PowerPoint knows the
+    # bridge's own presentation is still open rather than counting it as the user's.
+    if ($null -eq $script:Presentation) { return }
+    $script:Presentation.Close()
+    Release-ComObject $script:Presentation
+    $script:Presentation = $null
+}
+
 function Stop-PowerPoint {
-    if ($null -ne $script:Presentation) {
-        try { $script:Presentation.Close() } catch {
-            Write-Log -Level WARN -Message "Could not close PowerPoint presentation cleanly: $($_.Exception.Message)"
-        }
+    $ownStillOpen = 0
+    try { Close-Presentation } catch {
+        Write-Log -Level WARN -Message "Could not close PowerPoint presentation cleanly: $($_.Exception.Message)"
+        $ownStillOpen = 1
     }
     if ($null -ne $script:PowerPoint) {
-        try { $script:PowerPoint.Quit() } catch {
-            Write-Log -Level WARN -Message "Could not quit PowerPoint cleanly: $($_.Exception.Message)"
+        $userPresentations = $null
+        try {
+            $userPresentations = [int]$script:PowerPoint.Presentations.Count + [int]$script:PowerPoint.ProtectedViewWindows.Count - $ownStillOpen
+        }
+        catch { Write-Log -Level WARN -Message "Could not count open presentations; PowerPoint is left running: $($_.Exception.Message)" }
+        if ($script:PowerPointOwned -and $userPresentations -eq 0) {
+            try { $script:PowerPoint.Quit() } catch {
+                Write-Log -Level WARN -Message "Could not quit PowerPoint cleanly: $($_.Exception.Message)"
+            }
+        }
+        else {
+            # The user's instance, or ours after the user opened a presentation in it: never quit it.
+            try { $script:PowerPoint.DisplayAlerts = $script:PowerPointOriginalAlerts } catch {}
+            Write-Log -Level INFO -Message 'Left PowerPoint running; only the bridge presentation was closed.'
         }
     }
     Release-ComObject $script:Presentation
-    Release-ComObject $script:PowerPoint
     $script:Presentation = $null
+    Release-ComObject $script:PowerPoint
     $script:PowerPoint = $null
+    $script:PowerPointOwned = $false
     [GC]::Collect()
     [GC]::WaitForPendingFinalizers()
+}
+
+function Set-WarningPreference {
+    # MathType's Word add-in reads these preferences as REG_SZ "0"/"1" (MathType writes them that way); a
+    # REG_DWORD value is ignored, and the warning dialog then blocks the hidden Word instance.
+    param([Parameter(Mandatory)][string]$Name, [Parameter(Mandatory)][AllowEmptyString()][string]$Value)
+    New-ItemProperty -LiteralPath $script:WordCommandsKey -Name $Name -PropertyType String -Value $Value -Force | Out-Null
+}
+
+function Set-WarningValues {
+    # $null removes a value that did not exist before the run.
+    param([Parameter(Mandatory)][System.Collections.IDictionary]$Values)
+    foreach ($name in $script:WarningPreferenceNames) {
+        $value = $Values[$name]
+        if ($null -eq $value) { Remove-ItemProperty -LiteralPath $script:WordCommandsKey -Name $name -ErrorAction SilentlyContinue }
+        else { Set-WarningPreference -Name $name -Value ([string]$value) }
+    }
+}
+
+function Restore-JournaledPreferences {
+    # Runs under the bridge lock: a bridge killed before its finally left the user's values in the journal, and
+    # they must be back before anyone takes a new snapshot.
+    if (-not (Test-Path -LiteralPath $script:WarningJournalPath) -or -not (Test-Path -LiteralPath $script:WordCommandsKey)) { return }
+    $journal = $null
+    $problem = 'not a JSON object'
+    try { $journal = Get-Content -Raw -LiteralPath $script:WarningJournalPath | ConvertFrom-Json -AsHashtable }
+    catch { $problem = $_.Exception.Message }
+    if ($journal -isnot [System.Collections.IDictionary]) {
+        # A crash can leave the journal empty or NUL-filled. The user's values are lost, but a journal that can
+        # never be read must not block every later job.
+        $quarantine = "$($script:WarningJournalPath).corrupt-$([DateTime]::Now.ToString('yyyyMMddHHmmssfff'))"
+        Move-Item -LiteralPath $script:WarningJournalPath -Destination $quarantine -Force
+        Write-Log -Level WARN -Message "Unreadable warning-preference journal ($problem) moved to ${quarantine}; MathType warning preferences keep their current values."
+        return
+    }
+    Set-WarningValues -Values $journal
+    Remove-Item -LiteralPath $script:WarningJournalPath -Force
+    Write-Log -Level WARN -Message 'Restored MathType warning preferences left by an interrupted run.'
 }
 
 function Set-TemporaryMathTypePreferences {
     if (-not (Test-Path -LiteralPath $script:WordCommandsKey)) {
         throw 'MathType 7 WordCommands registry key was not found.'
     }
-    $properties = Get-ItemProperty -LiteralPath $script:WordCommandsKey
-    $script:OriginalNumberWarning = $properties.NoEqnNumWarningDlg
-    $script:OriginalReferenceWarning = $properties.NoInsertEqnRefDlg
-    Set-ItemProperty -LiteralPath $script:WordCommandsKey -Name NoEqnNumWarningDlg -Value 1
-    Set-ItemProperty -LiteralPath $script:WordCommandsKey -Name NoInsertEqnRefDlg -Value 1
+    $key = Get-Item -LiteralPath $script:WordCommandsKey
+    try {
+        $original = [ordered]@{}
+        foreach ($name in $script:WarningPreferenceNames) { $original[$name] = $key.GetValue($name) } # $null when absent
+    }
+    finally { $key.Close() }
+    # Journal first: if this process is killed, the next bridge (or the MCP watchdog) restores from it.
+    New-Item -ItemType Directory -Path (Split-Path -Parent $script:WarningJournalPath) -Force | Out-Null
+    $temporary = "$($script:WarningJournalPath).tmp"
+    $original | ConvertTo-Json -Compress | Set-Content -LiteralPath $temporary -Encoding utf8
+    Move-Item -LiteralPath $temporary -Destination $script:WarningJournalPath -Force
+    $script:OriginalWarningPreferences = $original
+    foreach ($name in $script:WarningPreferenceNames) { Set-WarningPreference -Name $name -Value '1' }
 }
 
 function Restore-MathTypePreferences {
-    if ($null -ne $script:OriginalNumberWarning -and (Test-Path -LiteralPath $script:WordCommandsKey)) {
-        Set-ItemProperty -LiteralPath $script:WordCommandsKey -Name NoEqnNumWarningDlg -Value $script:OriginalNumberWarning
-    }
-    if ($null -ne $script:OriginalReferenceWarning -and (Test-Path -LiteralPath $script:WordCommandsKey)) {
-        Set-ItemProperty -LiteralPath $script:WordCommandsKey -Name NoInsertEqnRefDlg -Value $script:OriginalReferenceWarning
+    if ($null -eq $script:OriginalWarningPreferences -or -not (Test-Path -LiteralPath $script:WordCommandsKey)) { return }
+    Set-WarningValues -Values $script:OriginalWarningPreferences
+    Remove-Item -LiteralPath $script:WarningJournalPath -ErrorAction SilentlyContinue
+    $script:OriginalWarningPreferences = $null
+}
+
+function Add-MissingProperties {
+    # StrictMode makes reading an absent JSON property throw. Give every expected property a value once, so
+    # optional fields take their defaults and missing required fields reach the validation messages below.
+    param([Parameter(Mandatory)]$InputObject, [Parameter(Mandatory)][hashtable]$Defaults)
+    foreach ($name in $Defaults.Keys) {
+        if ($null -eq $InputObject.PSObject.Properties[$name]) {
+            $InputObject | Add-Member -NotePropertyName $name -NotePropertyValue $Defaults[$name]
+        }
     }
 }
 
 function Read-Manifest {
     param([Parameter(Mandatory)][string]$Path)
     $resolved = Resolve-ExistingFile -Path $Path -Label 'ManifestPath'
-    $manifest = Get-Content -Raw -LiteralPath $resolved | ConvertFrom-Json
+    # -NoEnumerate keeps a one-element top-level array an array, so it is rejected instead of unwrapped.
+    $manifest = Get-Content -Raw -LiteralPath $resolved | ConvertFrom-Json -NoEnumerate
+    if ($manifest -isnot [System.Management.Automation.PSCustomObject]) { throw 'Manifest must be a JSON object.' }
+    Add-MissingProperties -InputObject $manifest -Defaults @{ schema_version = $null; equations = $null; references = $null; exact_line_spacing = 'at_least' }
     if ($manifest.schema_version -ne 1) { throw 'Manifest schema_version must be 1.' }
-    if ($null -eq $manifest.equations) { throw 'Manifest must contain an equations array.' }
-    if ($null -eq $manifest.references) {
-        $manifest | Add-Member -NotePropertyName references -NotePropertyValue @()
+    if ($manifest.equations -isnot [array]) { throw 'Manifest must contain an equations array.' }
+    if ($null -eq $manifest.references) { $manifest.references = @() }
+    elseif ($manifest.references -isnot [array]) { throw 'Manifest references must be an array.' }
+    foreach ($equation in $manifest.equations) {
+        if ($equation -isnot [System.Management.Automation.PSCustomObject]) { throw 'Every manifest equation must be a JSON object.' }
+        Add-MissingProperties -InputObject $equation -Defaults @{ id = $null; marker = $null; tex = $null; layout = $null; numbered = $false }
+    }
+    foreach ($reference in $manifest.references) {
+        if ($reference -isnot [System.Management.Automation.PSCustomObject]) { throw 'Every manifest reference must be a JSON object.' }
+        Add-MissingProperties -InputObject $reference -Defaults @{ marker = $null; target = $null }
     }
     return $manifest
 }
@@ -312,10 +528,14 @@ function Read-Manifest {
 function Assert-Manifest {
     param([Parameter(Mandatory)]$Manifest)
     $ids = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    # Invoke-Render keys number fields in a case-insensitive hashtable: "E1" and "e1" would share one field.
+    $foldedIds = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     $markers = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     foreach ($equation in @($Manifest.equations)) {
-        if ([string]::IsNullOrWhiteSpace($equation.id)) { throw 'Every equation requires a non-empty id.' }
+        # Ids are compared as strings: a numeric id would match a string target only after coercion.
+        if ($equation.id -isnot [string] -or [string]::IsNullOrWhiteSpace($equation.id)) { throw 'Every equation requires a non-empty string id.' }
         if (-not $ids.Add([string]$equation.id)) { throw "Duplicate equation id: $($equation.id)" }
+        if (-not $foldedIds.Add([string]$equation.id)) { throw "Equation id differs from another only by case: $($equation.id)" }
         if ([string]::IsNullOrWhiteSpace($equation.marker)) { throw "Equation '$($equation.id)' requires a marker." }
         if (-not $markers.Add([string]$equation.marker)) { throw "Duplicate marker: $($equation.marker)" }
         if ([string]::IsNullOrWhiteSpace($equation.tex)) { throw "Equation '$($equation.id)' requires TeX." }
@@ -327,10 +547,13 @@ function Assert-Manifest {
         }
         if ([string]$equation.tex -match '[\r\n]') { throw "Equation '$($equation.id)' TeX must be one line." }
     }
+    if (@('at_least', 'keep') -notcontains [string]$Manifest.exact_line_spacing) {
+        throw 'exact_line_spacing must be "at_least" or "keep".'
+    }
     foreach ($reference in @($Manifest.references)) {
         if ([string]::IsNullOrWhiteSpace($reference.marker)) { throw 'Every reference requires a marker.' }
         if (-not $markers.Add([string]$reference.marker)) { throw "Duplicate marker: $($reference.marker)" }
-        if (-not $ids.Contains([string]$reference.target)) {
+        if ($reference.target -isnot [string] -or -not $ids.Contains($reference.target)) {
             throw "Reference target does not exist: $($reference.target)"
         }
         $target = @($Manifest.equations | Where-Object id -eq $reference.target)[0]
@@ -341,9 +564,15 @@ function Assert-Manifest {
 function Read-PresentationManifest {
     param([Parameter(Mandatory)][string]$Path)
     $resolved = Resolve-ExistingFile -Path $Path -Label 'ManifestPath'
-    $manifest = Get-Content -Raw -LiteralPath $resolved | ConvertFrom-Json
+    $manifest = Get-Content -Raw -LiteralPath $resolved | ConvertFrom-Json -NoEnumerate
+    if ($manifest -isnot [System.Management.Automation.PSCustomObject]) { throw 'Presentation manifest must be a JSON object.' }
+    Add-MissingProperties -InputObject $manifest -Defaults @{ schema_version = $null; equations = $null }
     if ($manifest.schema_version -ne 1) { throw 'Presentation manifest schema_version must be 1.' }
-    if ($null -eq $manifest.equations) { throw 'Presentation manifest must contain an equations array.' }
+    if ($manifest.equations -isnot [array]) { throw 'Presentation manifest must contain an equations array.' }
+    foreach ($equation in $manifest.equations) {
+        if ($equation -isnot [System.Management.Automation.PSCustomObject]) { throw 'Every presentation equation must be a JSON object.' }
+        Add-MissingProperties -InputObject $equation -Defaults @{ id = $null; marker = $null; tex = $null; mathml = $null; height_points = $null }
+    }
     return $manifest
 }
 
@@ -376,28 +605,32 @@ function Assert-PresentationManifest {
 
 function Find-UniqueMarkerRange {
     param([Parameter(Mandatory)][string]$Marker)
+    # Count in the story text instead of re-running Find from each match: inside table cells Word's Find can
+    # return the same match again, which made the old search loop spin forever. Markers never overlap.
+    $occurrences = [regex]::Matches($script:Document.Content.Text, [regex]::Escape($Marker)).Count
+    if ($occurrences -ne 1) {
+        throw "Marker must occur exactly once; found ${occurrences}: $Marker"
+    }
     $search = $script:Document.Content.Duplicate
-    $matches = @()
+    $find = $search.Find
     try {
-        while ($search.Start -lt $search.End) {
-            $find = $search.Find
-            $find.ClearFormatting()
-            $find.Text = $Marker
-            $find.Forward = $true
-            $find.Wrap = 0
-            $find.MatchWildcards = $false
-            if (-not $find.Execute()) { break }
-            $matches += [ordered]@{ start = $search.Start; end = $search.End }
-            $next = $search.End
-            $search.SetRange($next, $script:Document.Content.End)
-            Release-ComObject $find
+        $find.ClearFormatting()
+        $find.Text = $Marker
+        $find.Forward = $true
+        $find.Wrap = 0
+        $find.MatchWildcards = $false
+        $find.MatchWholeWord = $false
+        # Ids are case-sensitive and the count above is too; a case-insensitive Find could pick another marker.
+        $find.MatchCase = $true
+        if (-not $find.Execute() -or [string]$search.Text -cne $Marker) {
+            throw "Word Find could not locate the marker that occurs in the text: $Marker"
         }
+        return $script:Document.Range($search.Start, $search.End)
     }
-    finally { Release-ComObject $search }
-    if ($matches.Count -ne 1) {
-        throw "Marker must occur exactly once; found $($matches.Count): $Marker"
+    finally {
+        Release-ComObject $find
+        Release-ComObject $search
     }
-    return $script:Document.Range($matches[0].start, $matches[0].end)
 }
 
 function Get-MathTypeShapeNear {
@@ -517,8 +750,39 @@ function Normalize-SimpleNumberField {
     $NumberField.Update() | Out-Null
 }
 
+function Get-ClippingLineSpacing {
+    # Returns the exact line spacing (pt) of the object's paragraph when it is lower than the object, else $null.
+    param([Parameter(Mandatory)]$Shape)
+    $format = $Shape.Range.ParagraphFormat
+    try {
+        if ($format.LineSpacingRule -ne $script:WdLineSpaceExactly) { return $null }
+        $spacing = [double]$format.LineSpacing
+        if ([double]$Shape.Height -gt $spacing + $script:LineSpacingTolerancePoints) { return $spacing }
+        return $null
+    }
+    finally { Release-ComObject $format }
+}
+
+function Repair-ClippedLineSpacing {
+    # Exact line spacing clips an object taller than the line. "At least" with the same value keeps the
+    # paragraph's spacing on every line the equation does not need to grow.
+    param([Parameter(Mandatory)]$Shape, [Parameter(Mandatory)][string]$EquationId)
+    $spacing = Get-ClippingLineSpacing -Shape $Shape
+    if ($null -eq $spacing) { return }
+    $format = $Shape.Range.ParagraphFormat
+    try {
+        $format.LineSpacingRule = $script:WdLineSpaceAtLeast
+        $format.LineSpacing = $spacing
+        # Exact spacing ignored the document line grid; at-least would snap every line to it again.
+        $format.DisableLineHeightGrid = -1
+    }
+    finally { Release-ComObject $format }
+    $script:LineSpacingRepairs.Add($EquationId)
+    Write-Log -Level INFO -Message "Changed exact $spacing pt line spacing to at-least for '$EquationId' ($([Math]::Round($Shape.Height, 1)) pt tall)."
+}
+
 function Convert-Equation {
-    param([Parameter(Mandatory)]$Equation)
+    param([Parameter(Mandatory)]$Equation, [switch]$RepairLineSpacing)
     Write-Log -Level INFO -Message "Converting equation '$($Equation.id)' as $($Equation.layout), numbered=$([bool]$Equation.numbered)."
     $markerRange = Find-UniqueMarkerRange -Marker ([string]$Equation.marker)
     $position = $markerRange.Start
@@ -540,6 +804,7 @@ function Convert-Equation {
     }
     $shape = Get-MathTypeShapeNear -Position $position
     Release-ComObject $markerRange
+    if ($RepairLineSpacing) { Repair-ClippedLineSpacing -Shape $shape -EquationId ([string]$Equation.id) }
 
     $numberField = $null
     if ([bool]$Equation.numbered) {
@@ -736,12 +1001,16 @@ function Save-PresentationAtomically {
     try {
         Write-Log -Level INFO -Message "Saving temporary PPTX: $temporary"
         $script:Presentation.SaveAs($temporary, 24)
-        Stop-PowerPoint
+        # Reopen in the same instance: quitting and relaunching races PowerPoint's asynchronous exit.
+        Close-Presentation
         try {
             Start-PowerPoint -PresentationPath $temporary -ReadOnly
             $validation = Get-PresentationValidationReport -PresentationPath $Destination -Manifest $Manifest
         }
-        finally { Stop-PowerPoint }
+        finally {
+            # Keep a validation error visible; a presentation left open is retried and counted when PowerPoint stops.
+            try { Close-Presentation } catch { Write-Log -Level WARN -Message "Could not close the validated PPTX: $($_.Exception.Message)" }
+        }
         if (-not $validation.ok) {
             throw "Generated PPTX validation failed: $($validation.errors -join '; ')"
         }
@@ -907,7 +1176,7 @@ function Invoke-Probe {
     $powerPointAddInLoaded = $false
     if ($PowerPointRequired) {
         try {
-            $script:PowerPoint = New-Object -ComObject PowerPoint.Application
+            Connect-PowerPoint
             $powerPointVersion = $script:PowerPoint.Version
             foreach ($addIn in @($script:PowerPoint.AddIns)) {
                 if ($addIn.Name -eq 'MathType AddIn') { $powerPointAddInLoaded = $true }
@@ -964,8 +1233,8 @@ function Invoke-ConfigureDefaults {
     if (-not (Test-Path -LiteralPath $script:WordCommandsKey)) {
         New-Item -Path $script:WordCommandsKey -Force | Out-Null
     }
-    New-ItemProperty -LiteralPath $script:WordCommandsKey -Name NoEqnNumWarningDlg -PropertyType DWord -Value 0 -Force | Out-Null
-    New-ItemProperty -LiteralPath $script:WordCommandsKey -Name NoInsertEqnRefDlg -PropertyType DWord -Value 1 -Force | Out-Null
+    Set-WarningPreference -Name NoEqnNumWarningDlg -Value '0'
+    Set-WarningPreference -Name NoInsertEqnRefDlg -Value '1'
     Write-JsonResult ([ordered]@{
         ok = $true
         action = 'configure-defaults'
@@ -973,6 +1242,31 @@ function Invoke-ConfigureDefaults {
         effective_number_format = '(1), (2), (3), ...'
         native_reference_pipeline = 'MTReference -> MTPlaceRef -> GOTOBUTTON/REF'
         scope = 'Defaults for every document processed by this bridge; warning preferences are also applied to the current MathType user profile.'
+    })
+}
+
+function Invoke-CheckManifest {
+    # Office-free: rejects a bad manifest before any Word session starts.
+    if ([string]::IsNullOrWhiteSpace($ManifestPath)) { throw 'check-manifest requires ManifestPath.' }
+    $manifest = Read-Manifest -Path $ManifestPath
+    Assert-Manifest -Manifest $manifest
+    $equations = @(foreach ($equation in $manifest.equations) {
+            [ordered]@{
+                id = [string]$equation.id; marker = [string]$equation.marker; tex = [string]$equation.tex
+                layout = [string]$equation.layout; numbered = [bool]$equation.numbered
+            }
+        })
+    $references = @(foreach ($reference in $manifest.references) {
+            [ordered]@{ marker = [string]$reference.marker; target = [string]$reference.target }
+        })
+    Write-JsonResult ([ordered]@{
+        ok = $true
+        action = 'check-manifest'
+        manifest_path = (Resolve-Path -LiteralPath $ManifestPath).Path
+        equations = $equations.Count
+        numbered_equations = @($equations | Where-Object { $_.numbered }).Count
+        references = $references.Count
+        exact_line_spacing = [string]$manifest.exact_line_spacing
     })
 }
 
@@ -985,13 +1279,14 @@ function Invoke-Render {
     $output = Resolve-OutputFile -Path $OutputPath
     $manifest = Read-Manifest -Path $ManifestPath
     Assert-Manifest -Manifest $manifest
+    $repairLineSpacing = [string]$manifest.exact_line_spacing -eq 'at_least'
     $numberFields = @{}
     Set-TemporaryMathTypePreferences
     try {
         Start-Word -DocumentPath $input
         Write-Log -Level INFO -Message "Opened input DOCX: $input"
         foreach ($equation in @($manifest.equations)) {
-            $numberField = Convert-Equation -Equation $equation
+            $numberField = Convert-Equation -Equation $equation -RepairLineSpacing:$repairLineSpacing
             if ($null -ne $numberField) {
                 $numberFields[[string]$equation.id] = $numberField
                 $script:HeldComObjects.Add($numberField)
@@ -1017,6 +1312,7 @@ function Invoke-Render {
         references = @($manifest.references).Count
         number_format = '(1), (2), (3), ...'
         reference_mechanism = 'MathType-native GOTOBUTTON/REF fields'
+        line_spacing_changed_for = @($script:LineSpacingRepairs)
         validation = $validation
     })
 }
@@ -1026,12 +1322,19 @@ function Get-ValidationReport {
     $errors = [System.Collections.Generic.List[string]]::new()
     $warnings = [System.Collections.Generic.List[string]]::new()
     $mathTypeObjects = 0
+    $clippedObjects = 0
     for ($index = 1; $index -le $script:Document.InlineShapes.Count; $index++) {
         $shape = $script:Document.InlineShapes.Item($index)
         $progId = $null
         try { $progId = $shape.OLEFormat.ProgID } catch {}
-        if ($progId -eq 'Equation.DSMT4') { $mathTypeObjects++ }
+        if ($progId -eq 'Equation.DSMT4') {
+            $mathTypeObjects++
+            if ($null -ne (Get-ClippingLineSpacing -Shape $shape)) { $clippedObjects++ }
+        }
         Release-ComObject $shape
+    }
+    if ($clippedObjects -gt 0) {
+        $warnings.Add("$clippedObjects MathType object(s) are taller than the exact line spacing of their paragraph and are clipped; use at-least line spacing there.")
     }
 
     $numberFields = @()
@@ -1164,10 +1467,12 @@ function Invoke-Cleanup {
 }
 
 try {
+    if (@('render', 'render-pptx', 'configure-defaults') -contains $Action) { Enter-BridgeLock }
     switch ($Action) {
         'probe' { Invoke-Probe }
         'probe-pptx' { Invoke-Probe -PowerPointRequired }
         'configure-defaults' { Invoke-ConfigureDefaults }
+        'check-manifest' { Invoke-CheckManifest }
         'render' { Invoke-Render }
         'validate' { Invoke-Validate }
         'update' { Invoke-Update }
@@ -1185,4 +1490,5 @@ finally {
     Stop-PowerPoint
     Stop-Word
     try { Restore-MathTypePreferences } catch { Write-Log -Level WARN -Message $_.Exception.Message }
+    Exit-BridgeLock
 }

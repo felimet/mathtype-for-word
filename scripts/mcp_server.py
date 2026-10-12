@@ -18,6 +18,19 @@ SERVER_NAME = "mathtype-for-word"
 SERVER_VERSION = "1.3.0"
 SCRIPT_PATH = Path(__file__).with_name("mathtype-word.ps1")
 DEFAULT_PROTOCOL_VERSION = "2025-06-18"
+WORD_COMMANDS_KEY = r"Software\Design Science\DSMT7\WordCommands"
+# Same names and paths as $script:WarningPreferenceNames, $script:WarningJournalPath and the bridge mutex.
+WARNING_PREFERENCE_NAMES = ("NoEqnNumWarningDlg", "NoInsertEqnRefDlg", "NoSlowUpdateEqnDlg")
+WARNING_JOURNAL_PATH = (
+    Path(os.environ.get("APPDATA") or Path.home()) / "MathTypeForWordAgent" / "warning-preferences.json"
+)
+BRIDGE_MUTEX_NAME = "Local\\MathTypeForWordAgentBridge"
+RECOVERY_LOCK_WAIT_MILLISECONDS = 2000
+WAIT_OBJECT_0 = 0
+WAIT_ABANDONED = 0x80
+JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
+JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
+_BRIDGE_JOB: int | None = None
 
 
 TOOLS: list[dict[str, Any]] = [
@@ -202,37 +215,166 @@ def _powershell_executable() -> str:
     return os.environ.get("MATHTYPE_WORD_POWERSHELL", "pwsh.exe")
 
 
-def _warning_preferences() -> dict[str, int]:
-    try:
-        import winreg
-
-        path = r"Software\Design Science\DSMT7\WordCommands"
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path) as key:
-            return {
-                name: int(winreg.QueryValueEx(key, name)[0])
-                for name in ("NoEqnNumWarningDlg", "NoInsertEqnRefDlg")
-            }
-    except (ImportError, OSError, ValueError):
-        return {}
+def _default_timeout() -> int:
+    return int(os.environ.get("MATHTYPE_OFFICE_TIMEOUT_SECONDS", os.environ.get("MATHTYPE_WORD_TIMEOUT_SECONDS", "240")))
 
 
-def _restore_warning_preferences(preferences: dict[str, int]) -> None:
-    if not preferences:
+def _restore_warning_preferences(preferences: dict[str, Any]) -> None:
+    """Write the user's warning preferences back; None removes a value that did not exist before the run."""
+    import winreg
+
+    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, WORD_COMMANDS_KEY, 0, winreg.KEY_SET_VALUE) as key:
+        for name in WARNING_PREFERENCE_NAMES:
+            value = preferences.get(name)
+            if value is None:
+                try:
+                    winreg.DeleteValue(key, name)
+                except FileNotFoundError:
+                    pass
+            else:
+                # MathType reads these as REG_SZ; a REG_DWORD value is ignored and its dialog appears.
+                winreg.SetValueEx(key, name, 0, winreg.REG_SZ, str(value))
+
+
+def _recover_warning_preferences() -> None:
+    """After killing a render bridge, restore the values it journaled, holding the bridge lock meanwhile.
+
+    The lock keeps this from undoing the temporary values of a bridge that started in the meantime; such a bridge
+    already restored the journal itself when it took the lock.
+    """
+    if os.name != "nt":
+        return
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateMutexW.restype = wintypes.HANDLE
+    kernel32.CreateMutexW.argtypes = (ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR)
+    kernel32.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+    kernel32.ReleaseMutex.argtypes = (wintypes.HANDLE,)
+    kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    handle = kernel32.CreateMutexW(None, False, BRIDGE_MUTEX_NAME)
+    if not handle:
+        _log(f"could not open the bridge lock: {ctypes.WinError(ctypes.get_last_error())}")
         return
     try:
-        import winreg
+        if kernel32.WaitForSingleObject(handle, RECOVERY_LOCK_WAIT_MILLISECONDS) not in (WAIT_OBJECT_0, WAIT_ABANDONED):
+            _log("bridge lock busy: its holder restored any warning-preference journal when it took the lock")
+            return
+        try:
+            journal = json.loads(WARNING_JOURNAL_PATH.read_text(encoding="utf-8-sig"))
+            _restore_warning_preferences(journal)
+            WARNING_JOURNAL_PATH.unlink()
+        except FileNotFoundError:
+            pass  # the bridge never set temporary values, or already restored them
+        except (OSError, ValueError) as exc:
+            _log(f"could not restore MathType warning preferences from {WARNING_JOURNAL_PATH}: {exc}")
+        finally:
+            kernel32.ReleaseMutex(handle)
+    finally:
+        kernel32.CloseHandle(handle)
 
-        path = r"Software\Design Science\DSMT7\WordCommands"
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path, 0, winreg.KEY_SET_VALUE) as key:
-            for name, value in preferences.items():
-                winreg.SetValueEx(key, name, 0, winreg.REG_DWORD, value)
-    except (ImportError, OSError, ValueError) as exc:
-        _log(f"could not restore MathType warning preferences after timeout: {exc}")
+
+def _bind_to_server_lifetime(process: subprocess.Popen) -> None:
+    """Windows keeps a child alive when its parent dies. A bridge that outlives this watchdog would hold the
+    bridge lock for as long as its hidden Word hangs, so every bridge joins a kill-on-close job object."""
+    global _BRIDGE_JOB
+    if os.name != "nt":
+        return
+    import ctypes
+    from ctypes import wintypes
+
+    class BasicLimits(ctypes.Structure):
+        _fields_ = [
+            ("PerProcessUserTimeLimit", ctypes.c_int64), ("PerJobUserTimeLimit", ctypes.c_int64),
+            ("LimitFlags", wintypes.DWORD), ("MinimumWorkingSetSize", ctypes.c_size_t),
+            ("MaximumWorkingSetSize", ctypes.c_size_t), ("ActiveProcessLimit", wintypes.DWORD),
+            ("Affinity", ctypes.c_size_t), ("PriorityClass", wintypes.DWORD), ("SchedulingClass", wintypes.DWORD),
+        ]
+
+    class ExtendedLimits(ctypes.Structure):
+        _fields_ = [
+            ("BasicLimitInformation", BasicLimits), ("IoInfo", ctypes.c_ulonglong * 6),
+            ("ProcessMemoryLimit", ctypes.c_size_t), ("JobMemoryLimit", ctypes.c_size_t),
+            ("PeakProcessMemoryUsed", ctypes.c_size_t), ("PeakJobMemoryUsed", ctypes.c_size_t),
+        ]
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+    kernel32.CreateJobObjectW.argtypes = (ctypes.c_void_p, wintypes.LPCWSTR)
+    kernel32.SetInformationJobObject.argtypes = (wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD)
+    kernel32.AssignProcessToJobObject.argtypes = (wintypes.HANDLE, wintypes.HANDLE)
+    if _BRIDGE_JOB is None:
+        job = kernel32.CreateJobObjectW(None, None)
+        limits = ExtendedLimits()
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        if not job or not kernel32.SetInformationJobObject(
+            job, JOB_OBJECT_EXTENDED_LIMIT_INFORMATION, ctypes.byref(limits), ctypes.sizeof(limits)
+        ):
+            _log(f"bridge job object unavailable: {ctypes.WinError(ctypes.get_last_error())}")
+            return
+        _BRIDGE_JOB = job  # held for this process's lifetime; the OS closes it, killing live bridges, on exit
+    if not kernel32.AssignProcessToJobObject(_BRIDGE_JOB, int(process._handle)):
+        _log(f"could not bind the bridge to the job object: {ctypes.WinError(ctypes.get_last_error())}")
 
 
-def _extract_word_pid(stderr: str) -> int | None:
-    matches = re.findall(r"\bWORD_PID=(\d+)\b", stderr)
-    return int(matches[-1]) if matches else None
+def _run_bridge(command: list[str], timeout: int) -> subprocess.CompletedProcess:
+    """subprocess.run with the bridge bound to this process's lifetime."""
+    with subprocess.Popen(
+        command,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    ) as process:
+        _bind_to_server_lifetime(process)
+        try:
+            stdout, stderr = process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired as exc:
+            process.kill()
+            exc.output, exc.stderr = process.communicate()
+            raise
+        except BaseException:
+            process.kill()
+            raise
+    return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+
+
+def _logged_pids(stderr: str) -> set[int]:
+    """Office PIDs the bridge reported as launched by itself (every Word session it opened)."""
+    return {int(pid) for pid in re.findall(r"\b(?:WORD|POWERPOINT)_PID=(\d+)\b", stderr)}
+
+
+def _has_visible_main_window(process_id: int) -> bool:
+    """The bridge's Word/PowerPoint stay hidden; a visible main frame means the user opened a file in it.
+
+    Dialogs are ignored on purpose: a MathType dialog in the hidden instance is the usual cause of a hang.
+    """
+    if os.name != "nt":
+        return False
+    import ctypes
+    from ctypes import wintypes
+
+    main_frame_classes = {"OpusApp", "PPTFrameClass"}
+    found = False
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def visit(window: int, _: int) -> bool:
+        nonlocal found
+        owner = wintypes.DWORD()
+        ctypes.windll.user32.GetWindowThreadProcessId(window, ctypes.byref(owner))
+        if owner.value != process_id or not ctypes.windll.user32.IsWindowVisible(window):
+            return True
+        class_name = ctypes.create_unicode_buffer(64)
+        ctypes.windll.user32.GetClassNameW(window, class_name, len(class_name))
+        found = class_name.value in main_frame_classes
+        return not found
+
+    ctypes.windll.user32.EnumWindows(visit, 0)
+    return found
 
 
 def _process_pids(executable_name: str) -> set[int]:
@@ -356,54 +498,46 @@ def _invoke_bridge(action: str, arguments: dict[str, Any], timeout: int | None =
     if arguments.get("overwrite"):
         command.append("-Overwrite")
 
-    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    effective_timeout = timeout or int(
-        os.environ.get("MATHTYPE_OFFICE_TIMEOUT_SECONDS", os.environ.get("MATHTYPE_WORD_TIMEOUT_SECONDS", "240"))
-    )
-    preferences = _warning_preferences()
+    effective_timeout = timeout or _default_timeout()
     word_pids_before = _process_pids("WINWORD.EXE")
     power_point_pids_before = _process_pids("POWERPNT.EXE")
     try:
-        completed = subprocess.run(
-            command,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=effective_timeout,
-            check=False,
-            creationflags=creationflags,
-        )
+        completed = _run_bridge(command, effective_timeout)
     except subprocess.TimeoutExpired as exc:
         stderr = exc.stderr or ""
         if isinstance(stderr, bytes):
             stderr = stderr.decode("utf-8", errors="replace")
-        word_process_id = _extract_word_pid(stderr)
         new_word_pids = sorted(_process_pids("WINWORD.EXE") - word_pids_before)
         new_power_point_pids = sorted(_process_pids("POWERPNT.EXE") - power_point_pids_before)
-        if word_process_id is None and len(new_word_pids) == 1:
-            word_process_id = new_word_pids[0]
-        terminated = [
-            process_id
-            for process_id in [*new_word_pids, *new_power_point_pids]
-            if _terminate_process_pid(process_id)
-        ]
-        cleaned = bool(word_process_id and word_process_id in terminated)
-        _restore_warning_preferences(preferences)
+        new_pids = {*new_word_pids, *new_power_point_pids}
+        # Terminate only live processes the bridge logged as its own. Office windows the user opened meanwhile
+        # are new processes too, and a user file opened inside the bridge's instance makes its frame visible.
+        bridge_pids = sorted(_logged_pids(stderr) & new_pids)
+        in_use = [pid for pid in bridge_pids if _has_visible_main_window(pid)]
+        terminated = [pid for pid in bridge_pids if pid not in in_use and _terminate_process_pid(pid)]
+        left_running = sorted(new_pids - set(terminated))
+        if left_running:
+            _log(f"left new Office processes running (not proven to be the bridge's, or holding user files): {left_running}")
+        if action == "render":  # the only action that sets temporary MathType preferences
+            _recover_warning_preferences()
         cleanup = _cleanup_bridge_output(arguments.get("output_path"), run_token)
         return {
             "ok": False,
             "action": action,
             "error": f"Word/MathType bridge timed out after {effective_timeout} seconds.",
-            "isolated_word_pid": word_process_id,
-            "isolated_word_process_terminated": cleaned,
+            "bridge_office_pids": bridge_pids,
+            "isolated_office_processes_terminated": terminated,
+            "office_pids_with_user_windows": in_use,
+            "new_office_pids_left_running": left_running,
             "new_word_pids_observed": new_word_pids,
             "new_powerpoint_pids_observed": new_power_point_pids,
-            "isolated_office_processes_terminated": terminated,
             "temporary_file_cleanup": cleanup,
         }
+    except BaseException:
+        # Interrupted (e.g. Ctrl+C): the bridge was killed before its finally block could restore.
+        if action == "render":
+            _recover_warning_preferences()
+        raise
     if completed.stderr.strip():
         _log(completed.stderr.strip())
     lines = [line.strip() for line in completed.stdout.splitlines() if line.strip()]
@@ -470,7 +604,8 @@ def _read_message(stream: BinaryIO) -> dict[str, Any] | None:
 
 
 def _write_message(message: dict[str, Any]) -> None:
-    data = json.dumps(message, ensure_ascii=False, separators=(",", ":"))
+    # ASCII escapes keep the wire format independent of the stdout code page (cp950, cp1252, ...).
+    data = json.dumps(message, separators=(",", ":"))
     sys.stdout.write(data + "\n")
     sys.stdout.flush()
 
@@ -519,6 +654,8 @@ def _handle(message: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def main() -> int:
+    # Windows starts Python with the ANSI code page on pipes; CJK paths in logs must not raise or garble.
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     _log(f"starting {SERVER_VERSION}")
     while True:
         message: dict[str, Any] | None = None

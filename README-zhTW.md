@@ -154,6 +154,8 @@ pwsh.exe -NoProfile -ExecutionPolicy Bypass -File tests/run-tests.ps1 -IncludeLi
 
 Bridge 會保留來源檔，先驗證同層暫存 Office 檔，再以原子方式發布；除非明確指定 `-Overwrite`，否則不覆寫既有輸出。所有可處理的結束路徑都會刪除帶有本次執行 token 的暫存 sibling，並只掃除命名格式完全相符且超過 24 小時的舊檔；MCP 逾時也會使用相同 token 要求清理。
 
+逾時時只終止 bridge 記錄為自身啟動的 Office 程序；PowerPoint 作業不會關閉使用者原本已開啟的 PowerPoint。
+
 ## Repository 結構
 
 | 路徑 | 用途 |

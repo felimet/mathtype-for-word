@@ -332,6 +332,40 @@ class StaticContractTests(unittest.TestCase):
         self.assertIn('"-RunToken"', server)
         self.assertIn('"temporary_file_cleanup": cleanup', server)
 
+    def test_office_safety_contract(self) -> None:
+        bridge = (ROOT / "scripts" / "mathtype-word.ps1").read_text(encoding="utf-8")
+        server = (ROOT / "scripts" / "mcp_server.py").read_text(encoding="utf-8")
+        # MathType ignores REG_DWORD warning preferences, and its dialog then blocks hidden Word.
+        for text in (bridge, server):
+            self.assertIn("NoSlowUpdateEqnDlg", text)
+        self.assertNotIn("-PropertyType DWord", bridge)
+        self.assertNotIn("Set-ItemProperty", bridge)  # keeps an existing value's DWORD kind
+        self.assertNotIn("winreg.REG_DWORD", server)
+        self.assertIn("-PropertyType String", bridge)
+        # UTF-8 only on a redirected stderr: setting the console code page leaks into the caller's shared console.
+        self.assertIn("[Console]::IsErrorRedirected", bridge)
+        self.assertIn("[Console]::SetError(", bridge)
+        self.assertNotIn("[Console]::OutputEncoding =", bridge)
+        # PowerPoint is single-instance: reopen for validation in the same instance, never quit the user's.
+        save_pptx = bridge[bridge.index("function Save-PresentationAtomically"):bridge.index("function Invoke-RenderPptx")]
+        self.assertNotIn("Stop-PowerPoint", save_pptx)
+        self.assertIn("$script:PowerPointOwned -and $userPresentations -eq 0", bridge)
+        start_pptx = bridge[bridge.index("function Start-PowerPoint"):bridge.index("function Stop-Word")]
+        self.assertLess(start_pptx.index(".FullName"), start_pptx.index("Presentations.Open"))
+        self.assertIn('throw "The presentation is already open in PowerPoint', start_pptx)
+        self.assertIn("'^https?://'", start_pptx)  # OneDrive/SharePoint files report a URL FullName
+        # Without leaving the document grid, an at-least line still snaps to the grid pitch.
+        repair = bridge[bridge.index("function Repair-ClippedLineSpacing"):bridge.index("function Convert-Equation")]
+        self.assertIn("DisableLineHeightGrid = -1", repair)
+        self.assertIn("ConvertTo-Json -Depth 20 -Compress -EscapeHandling EscapeNonAscii", bridge)
+        # The journal is written before the first temporary value and restored under the lock.
+        set_temporary = bridge[bridge.index("function Set-TemporaryMathTypePreferences"):bridge.index("function Restore-MathTypePreferences")]
+        self.assertLess(set_temporary.index("WarningJournalPath"), set_temporary.index("Set-WarningPreference -Name $name -Value '1'"))
+        self.assertIn("Restore-JournaledPreferences", bridge[bridge.index("function Enter-BridgeLock"):bridge.index("function Exit-BridgeLock")])
+        # The WORD_PID line must precede Documents.Open, where hangs happen.
+        start_word = bridge[bridge.index("function Start-Word"):bridge.index("function Connect-PowerPoint")]
+        self.assertLess(start_word.index("WORD_PID="), start_word.index("Documents.Open"))
+
 
 if __name__ == "__main__":
     unittest.main()
