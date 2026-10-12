@@ -585,7 +585,8 @@ class Utf8TransportTests(unittest.TestCase):
         target = str(Path(tempfile.gettempdir()) / "許功蓋 ソ" / "輸出.txt")
         code, result = run_bridge("-Action", "cleanup", "-OutputPath", target)
         self.assertEqual(code, 1)
-        self.assertIn(target, result["error"])
+        # The bridge reports the full path; on a runner whose TEMP is an 8.3 short path that is the long form.
+        self.assertIn(str(Path(target).resolve()), result["error"].replace(target, str(Path(target).resolve())))
 
     def test_batch_cli_prints_ascii_json(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

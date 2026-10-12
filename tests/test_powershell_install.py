@@ -121,7 +121,16 @@ class EnsureScriptTests(unittest.TestCase):
         cls.temp.cleanup()
 
     def install_root(self) -> Path:
-        return Path(tempfile.mkdtemp(dir=self.temp.name))
+        # The 8.3 short form when the volume has one, as on GitHub's runners (C:\\Users\\RUNNER~1\\...): the installer
+        # must treat it as the same folder as the long form that PowerShell lists.
+        root = tempfile.mkdtemp(prefix="install-root-", dir=self.temp.name)
+        if os.name == "nt":
+            import ctypes
+
+            buffer = ctypes.create_unicode_buffer(1024)
+            if ctypes.windll.kernel32.GetShortPathNameW(root, buffer, len(buffer)):
+                return Path(buffer.value)
+        return Path(root)
 
     def install(self, root: Path, version: str, archive: bytes, sha256: str | None = None) -> tuple[int, dict]:
         base = self.server.publish(version, archive)
@@ -170,7 +179,7 @@ class EnsureScriptTests(unittest.TestCase):
         self.assertEqual(code, 0, result)
         self.assertTrue(result["installed"], result)
         self.assertEqual(result["version"], self.version)
-        self.assertEqual(Path(result["path"]), root / self.version / "pwsh.exe")
+        self.assertEqual(Path(result["path"]).resolve(), (root / self.version / "pwsh.exe").resolve())
         self.assertEqual(result["sha256"], hashlib.sha256(archive).hexdigest())
         self.assertEqual([entry.name for entry in root.iterdir()], [self.version])  # no staging or cache left behind
 
@@ -178,7 +187,7 @@ class EnsureScriptTests(unittest.TestCase):
                                  f"{self.server.base}/unused", "-Version", self.version)
         self.assertEqual(code, 0, again)
         self.assertFalse(again["installed"])
-        self.assertEqual(again["path"], result["path"])
+        self.assertEqual(Path(again["path"]).resolve(), Path(result["path"]).resolve())
 
     def test_own_copy_older_than_the_release_to_install_is_not_used(self) -> None:
         if not self.version:
@@ -281,7 +290,7 @@ class EnsureScriptTests(unittest.TestCase):
         result = parse_ensure(stdout, waiting.returncode, stderr)
         self.assertTrue(result["ok"], result)
         self.assertFalse(result["installed"])  # it found the first install instead of downloading again
-        self.assertEqual(Path(result["path"]), root / self.version / "pwsh.exe")
+        self.assertEqual(Path(result["path"]).resolve(), (root / self.version / "pwsh.exe").resolve())
 
 
 class ServerInstallTests(unittest.TestCase):

@@ -59,32 +59,37 @@ function Get-PowerShellVersion {
 }
 
 function Find-PowerShell7 {
-    if ($IgnoreExisting) { $candidates = @() }
-    else {
-        $candidates = @(Get-Command pwsh.exe -CommandType Application -ErrorAction SilentlyContinue | ForEach-Object Source)
+    # Whether a candidate is this script's own copy comes from where it was listed, never from comparing path strings:
+    # an 8.3 short name and its long form are the same folder.
+    $candidates = @()
+    if (-not $IgnoreExisting) {
+        $external = @(Get-Command pwsh.exe -CommandType Application -ErrorAction SilentlyContinue | ForEach-Object Source)
         foreach ($root in @($env:ProgramFiles, $env:ProgramW6432) | Where-Object { $_ } | Select-Object -Unique) {
-            $candidates += Join-Path $root 'PowerShell\7\pwsh.exe'
+            $external += Join-Path $root 'PowerShell\7\pwsh.exe'
         }
+        $candidates += @($external | ForEach-Object { [pscustomobject]@{ Path = $_; Own = $false } })
+    }
+    if (Test-Path -LiteralPath $InstallRoot -PathType Container) {
+        $installed = Get-ChildItem -LiteralPath $InstallRoot -Directory |
+            Where-Object { -not $_.Name.StartsWith('.') } |
+            ForEach-Object { Join-Path $_.FullName 'pwsh.exe' } |
+            Sort-Object { Get-PowerShellVersion $_ } -Descending
+        $candidates += @($installed | ForEach-Object { [pscustomobject]@{ Path = $_; Own = $true } })
     }
     # This script's own copies count only from the release it installs, so a plugin release with a newer pin replaces
     # them; PowerShell 7 on PATH or in Program Files is serviced by Windows and counts from 7.0.
     $ownMinimum = [version]$script:Release
-    if (Test-Path -LiteralPath $InstallRoot -PathType Container) {
-        $installed = Get-ChildItem -LiteralPath $InstallRoot -Directory |
-            Where-Object { -not $_.Name.StartsWith('.') } |
-            ForEach-Object { Join-Path $_.FullName 'pwsh.exe' }
-        $candidates += @($installed | Sort-Object { Get-PowerShellVersion $_ } -Descending)
-    }
+    $externalMinimum = [version]::new($script:MinimumMajorVersion, 0)
     foreach ($candidate in $candidates) {
-        if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) { continue }
-        $found = Get-PowerShellVersion $candidate
-        $own = $candidate.StartsWith($InstallRoot, [StringComparison]::OrdinalIgnoreCase)
-        if ($null -ne $found -and $found.Major -ge $script:MinimumMajorVersion -and (-not $own -or $found -ge $ownMinimum)) {
-            return [ordered]@{ path = $candidate; version = $found.ToString(3) }
+        if (-not (Test-Path -LiteralPath $candidate.Path -PathType Leaf)) { continue }
+        $found = Get-PowerShellVersion $candidate.Path
+        $minimum = if ($candidate.Own) { $ownMinimum } else { $externalMinimum }
+        if ($null -ne $found -and $found -ge $minimum) {
+            return [ordered]@{ path = $candidate.Path; version = $found.ToString(3); own = $candidate.Own }
         }
         # A Microsoft Store app-execution alias on PATH has no version resource; it is PowerShell 7 by definition.
-        if ($null -eq $found -and $candidate -like '*\Microsoft\WindowsApps\pwsh.exe') {
-            return [ordered]@{ path = $candidate; version = $null }
+        if ($null -eq $found -and -not $candidate.Own -and $candidate.Path -like '*\Microsoft\WindowsApps\pwsh.exe') {
+            return [ordered]@{ path = $candidate.Path; version = $null; own = $false }
         }
     }
     return $null
@@ -177,7 +182,7 @@ function Install-PowerShell7 {
         # Older copies of this script's own. Renaming a copy that another client still runs fails, so that copy stays
         # whole and a later install removes it; a renamed copy is staging, which the next install sweeps if needed.
         foreach ($older in Get-ChildItem -LiteralPath $InstallRoot -Directory |
-                Where-Object { -not $_.Name.StartsWith('.') -and $_.FullName -ne $target }) {
+                Where-Object { -not $_.Name.StartsWith('.') -and $_.Name -ne $release }) {
             $retired = Join-Path $InstallRoot ($script:StagingPrefix + [guid]::NewGuid().ToString('N'))
             try { [IO.Directory]::Move($older.FullName, $retired) } catch { continue }
             Remove-Item -LiteralPath $retired -Recurse -Force -ErrorAction SilentlyContinue
@@ -210,7 +215,7 @@ function Clear-InstallLeftovers {
 try {
     $found = Find-PowerShell7
     if ($null -ne $found) {
-        if (-not $found.path.StartsWith($InstallRoot, [StringComparison]::OrdinalIgnoreCase)) { Clear-InstallLeftovers }
+        if (-not $found.own) { Clear-InstallLeftovers }
         Write-AsciiJson ([ordered]@{ ok = $true; installed = $false; path = $found.path; version = $found.version })
         exit 0
     }

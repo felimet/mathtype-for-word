@@ -18,7 +18,7 @@ Both skill validators ran with `PYTHONUTF8=1` and an ephemeral `uv run --with py
 
 ### Office-free suite
 
-`pwsh.exe -NoProfile -ExecutionPolicy Bypass -File tests\run-tests.ps1`: 97 Python tests passed, 1 skipped (live MCP calls), and every PowerShell file parsed. The same suite run by Windows PowerShell 5.1 with no PowerShell 7 on PATH skips the tests that need PowerShell 7 and passes the rest without starting an install. The suite covers, without Office:
+`pwsh.exe -NoProfile -ExecutionPolicy Bypass -File tests\run-tests.ps1`: 97 Python tests passed, 1 skipped (live MCP calls), and every PowerShell file parsed. It also passes with `TEMP` set to an 8.3 short path, as on GitHub's Windows runners. The same suite run by Windows PowerShell 5.1 with no PowerShell 7 on PATH skips the tests that need PowerShell 7 and passes the rest without starting an install. The suite covers, without Office:
 
 - the batched job runner against a fake bridge that applies the bridge's validation rules (chunk planning, anchored references, splitting, resume, older job state, timeouts, background start, status cleanup);
 - MCP tool listing, refusals during a render job, and bridge switch mapping;
