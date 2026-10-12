@@ -3,10 +3,11 @@
 ## Contents
 
 1. End-to-end flow
-2. Schema v1
-3. Complete example
-4. Marker preparation
-5. Output contract
+2. Large documents
+3. Schema v1
+4. Complete example
+5. Marker preparation
+6. Output contract
 
 ## End-to-end flow
 
@@ -22,7 +23,22 @@ The bridge performs a deterministic transaction:
 8. Save to a temporary sibling file, reopen it read-only, and validate it.
 9. Move it atomically to the output path only when validation passes.
 
-The bridge refuses an existing output unless `overwrite` is explicitly true. Each editing bridge call (a Word render, `render-pptx`, `configure-defaults`) holds a per-Windows-session lock (`Local\` namespace) and waits up to 30 seconds (`MATHTYPE_BRIDGE_LOCK_WAIT_SECONDS`) for it; `update` only refreshes Word fields and does not take the lock.
+The bridge refuses an existing output unless `overwrite` is explicitly true. A render job refuses to start while another render job is active; poll `get_mathtype_render_status` for that job. Each editing bridge call (a Word render chunk, `render-pptx`, `configure-defaults`) holds a per-Windows-session lock (`Local\` namespace) and waits up to 30 seconds (`MATHTYPE_BRIDGE_LOCK_WAIT_SECONDS`) for it; `update` only refreshes Word fields and does not take the lock.
+
+## Large documents
+
+One hidden Word session fails with RPC errors after a few hundred conversions, so `render_mathtype_word_document` renders a manifest with more than `batch_size` equations (default 40; `0` disables batching) as a job:
+
+1. Equations that no reference targets render in chunks of `batch_size`, each in a fresh Word session that writes a checkpoint DOCX. Each chunk is validated as a partial manifest.
+2. Referenced numbered equations and all references render last, in one session that ignores `batch_size` and is never split, because MathType places a reference by clicking the live number field of its target. This session writes the real output and validates it strictly against the whole manifest before publishing it.
+3. Any other chunk that fails because its Word session broke down (RPC error, crash, a first timeout) is retried split in half; a second timeout in a row stops the job. Any other failure stops the job and names its cause. If the last chunk fails that way, resuming or lowering `batch_size` reruns the same chunk: keep referenced equations plus references well below a few hundred per document, or render the document in parts (for example per chapter).
+4. Calling render again with the same input, output, and manifest resumes after the last committed chunk. A changed input or manifest starts over.
+
+The render result lists every equation whose paragraph line spacing changed (`line_spacing_changed_for`, across all chunks) and every watchdog timeout with its process cleanup (`timeouts`).
+
+Pass `background: true` when the job may outlast the client's tool-call time limit, then poll `get_mathtype_render_status` with the same output path. Job state, checkpoints, and the log live in `%APPDATA%\MathTypeForWordAgent\jobs`, never beside the user's files. `cleanup: true` removes them once the job is completed, failed, or interrupted; do not clean a failed or interrupted job you intend to resume, because its next render starts from the first chunk.
+
+A partial manifest (`partial_manifest: true`) covers only part of the document: markers outside it remain as warnings and native number/reference counts are lower bounds. Its own markers must still resolve.
 
 ## Schema v1
 

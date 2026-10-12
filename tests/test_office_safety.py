@@ -99,6 +99,17 @@ class TimeoutCleanupTests(unittest.TestCase):
     def test_other_actions_never_touch_the_preferences(self) -> None:
         self.interrupted("validate").assert_not_called()
 
+    def test_batch_options_reach_the_bridge_switches(self) -> None:
+        done = subprocess.CompletedProcess([], 0, stdout='{"ok": true}\n', stderr="")
+        with mock.patch.object(mcp_server, "_run_bridge", return_value=done) as run:
+            mcp_server._invoke_bridge("render", {"partial_manifest": True, "validation_manifest_path": "C:\\m.json"})
+        command = run.call_args.args[0]
+        self.assertIn("-PartialManifest", command)
+        self.assertEqual(command[command.index("-ValidationManifestPath") + 1], "C:\\m.json")
+        parameters = BRIDGE.read_text(encoding="utf-8").split("Set-StrictMode", 1)[0]
+        for name in ("$PartialManifest", "$ValidationManifestPath"):
+            self.assertIn(name, parameters)
+
 
 class BridgeProcessTests(unittest.TestCase):
     """_run_bridge replaced subprocess.run: the kill at the deadline and the kill-on-close job are its own code."""
@@ -332,6 +343,7 @@ class Utf8TransportTests(unittest.TestCase):
     def test_server_answers_cjk_requests_on_an_ansi_code_page(self) -> None:
         environment = {k: v for k, v in os.environ.items() if k not in ("PYTHONIOENCODING", "PYTHONUTF8")}
         with tempfile.TemporaryDirectory() as directory:
+            environment["MATHTYPE_JOBS_DIR"] = directory
             output = str(Path(directory) / "許功蓋 ソ" / "輸出 é.docx")
             server = subprocess.Popen([sys.executable, str(SCRIPTS / "mcp_server.py")], stdin=subprocess.PIPE,
                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=environment)
@@ -340,7 +352,9 @@ class Utf8TransportTests(unittest.TestCase):
                     {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "許功蓋é", "arguments": {}}},
                     {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
                      "params": {"name": "validate_mathtype_word_document", "arguments": {"document_path": output}}},
-                    {"jsonrpc": "2.0", "id": 3, "method": "ping"},
+                    {"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+                     "params": {"name": "get_mathtype_render_status", "arguments": {"output_path": output}}},
+                    {"jsonrpc": "2.0", "id": 4, "method": "ping"},
                 ]
                 responses = []
                 for request in requests:
@@ -352,7 +366,8 @@ class Utf8TransportTests(unittest.TestCase):
                 server.communicate()
         self.assertIn("許功蓋é", responses[0]["error"]["message"])
         self.assertIn(output, responses[1]["result"]["structuredContent"]["error"])  # through the bridge
-        self.assertEqual(responses[2]["result"], {})
+        self.assertEqual(responses[2]["result"]["structuredContent"]["output_path"], str(Path(output).resolve()))
+        self.assertEqual(responses[3]["result"], {})
 
     @unittest.skipUnless(PWSH, "PowerShell 7 is unavailable")
     def test_bridge_json_survives_big5_backslash_trail_bytes(self) -> None:
@@ -360,6 +375,17 @@ class Utf8TransportTests(unittest.TestCase):
         code, result = run_bridge("-Action", "cleanup", "-OutputPath", target)
         self.assertEqual(code, 1)
         self.assertIn(target, result["error"])
+
+    def test_batch_cli_prints_ascii_json(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output = str(Path(directory) / "周家銘" / "輸出.docx")
+            completed = subprocess.run(
+                [sys.executable, str(SCRIPTS / "mathtype_batch.py"), "status", "--output", output],
+                capture_output=True, timeout=60, check=False, env=dict(os.environ, MATHTYPE_JOBS_DIR=directory),
+            )
+        line = completed.stdout.splitlines()[-1]
+        self.assertTrue(line.isascii(), line)
+        self.assertEqual(json.loads(line)["output_path"], str(Path(output).resolve()))
 
 
 @unittest.skipUnless(PWSH, "PowerShell 7 is unavailable")
@@ -403,6 +429,19 @@ class ManifestNormalizationTests(unittest.TestCase):
                 code, result = self.check(manifest)
                 self.assertEqual(code, 1)
                 self.assertIn(expected, result["error"])
+
+    def test_normalized_manifest_is_what_the_batch_planner_reads(self) -> None:
+        path = self.directory / "upper.json"
+        # Keys in other case and a byte-order mark parse in the bridge; the planner must see the same manifest.
+        path.write_text('{"Schema_Version":1,"Equations":[{"ID":"a","Marker":"{{MATH:a}}","TeX":"x","Layout":"display",'
+                        '"Numbered":true}],"References":[{"Marker":"{{EQREF:a}}","Target":"a"}]}', encoding="utf-8-sig")
+        code, result = run_bridge("-Action", "check-manifest", "-ManifestPath", str(path))
+        self.assertEqual(code, 0, result)
+        self.assertEqual(result["manifest"], {
+            "schema_version": 1, "exact_line_spacing": "at_least",
+            "equations": [{"id": "a", "marker": "{{MATH:a}}", "tex": "x", "layout": "display", "numbered": True}],
+            "references": [{"marker": "{{EQREF:a}}", "target": "a"}],
+        })
 
     def test_presentation_equation_without_height_is_accepted(self) -> None:
         # The duplicate id fails validation after the first equation (no height_points) was read, and before

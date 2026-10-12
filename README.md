@@ -154,7 +154,7 @@ Use the installed MathType for Word and PowerPoint toolkit for a smoke test. Run
 
 The bridge preserves source files, validates each temporary Office file before atomic publication, and refuses to replace an existing output unless `-Overwrite` is explicit. It removes the current run's tokenized temporary sibling on handled exits and sweeps only matching siblings older than 24 hours; MCP timeouts request cleanup with the same per-run token.
 
-A timeout terminates only Office processes the bridge logged as its own, and PowerPoint work never closes a PowerPoint instance the user already had open.
+Large Word documents render in resumable batches of fresh Word sessions (`batch_size`, default 40), optionally in the background with `get_mathtype_render_status` for progress; the output is published only after strict validation of the whole manifest. One render job runs at a time. A timeout terminates only Office processes the bridge logged as its own, and PowerPoint work never closes a PowerPoint instance the user already had open.
 
 ## Repository layout
 

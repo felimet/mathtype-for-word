@@ -50,7 +50,7 @@ Create real MathType equations in DOCX and PPTX, preserving MathType-native Word
 3. Scan the complete document twice. First inventory every equation candidate and later prose reference. Then classify each candidate as `inline`, `display`, or `display_numbered`, and each prose occurrence as `reference`, using [academic-equation-style.md](references/academic-equation-style.md). Decide every identifier, unique marker, TeX, layout, numbered state, reference marker, and target.
 4. Create a schema v1 JSON manifest. Read [workflow-and-schema.md](references/workflow-and-schema.md) for the exact contract and examples.
 5. For academic prose and mathematical typography, apply [academic-equation-style.md](references/academic-equation-style.md). A display equation must be introduced in the preceding prose and followed by “其中，” plus definitions of every symbol, index, superscript, subscript, unit, and physical meaning that is not already unambiguous. Audit the whole document so variables, vectors, matrices, functions, constants, indices, and units retain one consistent style.
-6. Call `render_mathtype_word_document`. Do not edit the same DOCX concurrently in Word.
+6. Call `render_mathtype_word_document`. Do not edit the same DOCX concurrently in Word. Manifests with more than `batch_size` (default 40) equations render in fresh Word sessions with checkpoints; when the render may outlast the client's tool-call time limit, pass `background: true` and poll `get_mathtype_render_status` while its status is `queued` or `running`, and stop on any other status. On `interrupted`, call render again with the same paths (and `background: true` again) to resume from the last checkpoint. On `failed`, read `error` first: a bad marker, TeX, or validation result needs a corrected manifest or document, which starts the job over.
 7. Call `validate_mathtype_word_document` with the same manifest. A render is incomplete until validation returns `ok: true`.
 8. For complex fractions, matrices, aligned systems, accents, or nested scripts, open/render the result and visually inspect it. Structural checks cannot prove typographic correctness.
 9. Report the output path, counts, native number/reference mechanism, validation result, and any limitations.
@@ -71,21 +71,25 @@ Use the bundled local MCP server when available:
 
 - `probe_mathtype_word`: read-only prerequisite check.
 - `configure_mathtype_word_defaults`: persist the packaged default profile and MathType warning preferences. Invoke only when the user asks to configure defaults or during an explicitly requested installation.
-- `render_mathtype_word_document`: marker-driven conversion and reference placement.
+- `render_mathtype_word_document`: marker-driven conversion and reference placement; batched, resumable, and optionally in the background.
+- `get_mathtype_render_status`: progress, log tail, and final result of a render job, keyed by its output path.
 - `validate_mathtype_word_document`: read-only structural validation.
 - `update_mathtype_word_fields`: update number/reference fields after moving, adding, or deleting equations.
 - `probe_mathtype_powerpoint`: verify the desktop PowerPoint and MathType 7 integration.
 - `render_mathtype_powerpoint_presentation`: replace marker-only text boxes with centered, editable MathType OLE objects.
 - `validate_mathtype_powerpoint_presentation`: verify expected named OLE objects, centering, and resolved markers.
 
-If MCP is unavailable, invoke the same bridge directly from the plugin root:
+If MCP is unavailable, run the same bridge and job runner directly from the plugin root. Render through the job runner, which batches, checkpoints, and resumes exactly like `render_mathtype_word_document`; run the same `render` command again to resume:
 
 ```powershell
 # Resolve these variables from the user's attached or repository files; never reuse a sample path literally.
 pwsh.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts\mathtype-word.ps1 -Action probe
-pwsh.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts\mathtype-word.ps1 -Action render -InputPath $inputDocx -OutputPath $outputDocx -ManifestPath $manifestJson
+python scripts\mathtype_batch.py render --input $inputDocx --output $outputDocx --manifest $manifestJson --batch-size 40
+python scripts\mathtype_batch.py status --output $outputDocx
 pwsh.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts\mathtype-word.ps1 -Action validate -InputPath $outputDocx -ManifestPath $manifestJson
 ```
+
+Without Python, `-Action render` on the bridge renders in one Word session; use it only for manifests of at most 40 equations. Every command prints one ASCII JSON line.
 
 ## Manifest decisions
 
@@ -161,10 +165,10 @@ Treat any of these as a failed deliverable:
 - If probe fails, use [troubleshooting.md](references/troubleshooting.md); do not silently fall back.
 - If Toggle TeX does not create exactly one `Equation.DSMT4` object, preserve the input, stop, and report the equation ID and TeX.
 - If MathType fails to create or resolve `MTReference`, preserve the failed output only for diagnosis and do not present it as complete.
-- If the MCP watchdog reports a timeout, record `bridge_office_pids`, `isolated_office_processes_terminated`, `new_office_pids_left_running`, and the cleanup result, verify the warning preferences were restored (`%APPDATA%\MathTypeForWordAgent\warning-preferences.json` absent means the user's values are back; present means the next render, render-pptx, or configure-defaults call restores them when it takes the bridge lock), then retry only the smallest fixture once before escalating. The watchdog terminates only Office processes the bridge logged as its own; it never terminates other new Word or PowerPoint windows.
-- A bridge killed before it finishes (for example with its MCP server) skips its own cleanup. The next render, render-pptx, or configure-defaults call ends the hidden Word or PowerPoint that the killed run launched (unless it now shows a window) and restores the warning preferences when it takes the bridge lock.
+- If the MCP watchdog reports a timeout, record `bridge_office_pids`, `isolated_office_processes_terminated`, `new_office_pids_left_running`, and the cleanup result, verify the warning preferences were restored (`%APPDATA%\MathTypeForWordAgent\warning-preferences.json` absent means the user's values are back; present means the next render, render-pptx, or configure-defaults call restores them when it takes the bridge lock), then retry only the smallest fixture once before escalating. For `render_mathtype_word_document`, these keys are in the `timeouts` list of the render result, successful or failed, or of `get_mathtype_render_status`; other tools report them at the top level. The watchdog terminates only Office processes the bridge logged as its own; it never terminates other new Word or PowerPoint windows.
+- A bridge killed before it finishes (with its MCP server, or by ending a background job's process, the `pid` in its status) skips its own cleanup. The next render, render-pptx, or configure-defaults call ends the hidden Word or PowerPoint that the killed run launched (unless it now shows a window) and restores the warning preferences when it takes the bridge lock.
 - If the requested TeX is outside MathType's supported conversion subset, simplify it, split it into supported expressions, or ask for a MathType-authored source equation.
-- Word COM is single-user desktop automation. Do not run two render jobs concurrently in the same Windows profile.
+- Word COM is single-user desktop automation. Do not run two render jobs concurrently in the same Windows profile. The job runner refuses a second Word render job, and the MCP tools `render_mathtype_powerpoint_presentation` and `configure_mathtype_word_defaults` are refused while a Word render job is active. A direct `mathtype-word.ps1 -Action render-pptx` or `-Action configure-defaults` call is not checked: do not start one while `python scripts\mathtype_batch.py status --output <docx>` reports `queued` or `running`.
 
 ## Reference routing
 

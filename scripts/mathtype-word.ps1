@@ -9,7 +9,11 @@ param(
     [string]$ManifestPath,
     [ValidatePattern('^[0-9a-fA-F]{32}$')]
     [string]$RunToken,
-    [switch]$Overwrite
+    [switch]$Overwrite,
+    # The manifest covers only part of the document: markers outside it may remain and counts are lower bounds.
+    [switch]$PartialManifest,
+    # Validate the saved DOCX against this manifest instead of -ManifestPath (last chunk of a batched render).
+    [string]$ValidationManifestPath
 )
 
 Set-StrictMode -Version Latest
@@ -1246,7 +1250,8 @@ function Invoke-ConfigureDefaults {
 }
 
 function Invoke-CheckManifest {
-    # Office-free: rejects a bad manifest before any Word session starts.
+    # Office-free: lets a batched render reject a bad manifest before its first Word session. The normalized copy
+    # is the only manifest the batch planner reads, so it never parses the file differently from the bridge.
     if ([string]::IsNullOrWhiteSpace($ManifestPath)) { throw 'check-manifest requires ManifestPath.' }
     $manifest = Read-Manifest -Path $ManifestPath
     Assert-Manifest -Manifest $manifest
@@ -1267,6 +1272,12 @@ function Invoke-CheckManifest {
         numbered_equations = @($equations | Where-Object { $_.numbered }).Count
         references = $references.Count
         exact_line_spacing = [string]$manifest.exact_line_spacing
+        manifest = [ordered]@{
+            schema_version = 1
+            exact_line_spacing = [string]$manifest.exact_line_spacing
+            equations = $equations
+            references = $references
+        }
     })
 }
 
@@ -1279,6 +1290,11 @@ function Invoke-Render {
     $output = Resolve-OutputFile -Path $OutputPath
     $manifest = Read-Manifest -Path $ManifestPath
     Assert-Manifest -Manifest $manifest
+    $validationManifest = $manifest
+    if (-not [string]::IsNullOrWhiteSpace($ValidationManifestPath)) {
+        $validationManifest = Read-Manifest -Path $ValidationManifestPath
+        Assert-Manifest -Manifest $validationManifest
+    }
     $repairLineSpacing = [string]$manifest.exact_line_spacing -eq 'at_least'
     $numberFields = @{}
     Set-TemporaryMathTypePreferences
@@ -1296,7 +1312,7 @@ function Invoke-Render {
             Insert-NativeReference -Reference $reference -TargetField $numberFields[[string]$reference.target]
         }
         $script:Document.Fields.Update() | Out-Null
-        $validation = Save-DocumentAtomically -Destination $output -Manifest $manifest
+        $validation = Save-DocumentAtomically -Destination $output -Manifest $validationManifest
     }
     finally {
         Stop-Word
@@ -1390,7 +1406,11 @@ function Get-ValidationReport {
 
     $plainText = $script:Document.Content.Text
     if ($plainText -match 'equation reference goes here') { $errors.Add('An unresolved MathType equation-reference placeholder remains.') }
-    if ($plainText -match '\{\{(?:MATH|EQREF):') { $errors.Add('An unresolved equation or reference marker remains.') }
+    $leftoverMarkers = [regex]::Matches($plainText, '\{\{(?:MATH|EQREF):').Count
+    if ($leftoverMarkers -gt 0) {
+        $message = "$leftoverMarkers unresolved equation or reference marker(s) remain."
+        if ($PartialManifest) { $warnings.Add("$message They are outside this partial manifest.") } else { $errors.Add($message) }
+    }
     if ($plainText -match 'Error! Reference source not found') { $errors.Add('Word reports a missing reference source.') }
     if ($script:Document.OMaths.Count -gt 0) { $errors.Add("Found $($script:Document.OMaths.Count) Word built-in equation object(s); MathType is required.") }
 
@@ -1399,8 +1419,15 @@ function Get-ValidationReport {
         $expectedNumbers = @($Manifest.equations | Where-Object numbered).Count
         $expectedReferences = @($Manifest.references).Count
         if ($mathTypeObjects -lt $expectedObjects) { $errors.Add("Expected at least $expectedObjects MathType objects; found $mathTypeObjects.") }
-        if ($numberFields.Count -ne $expectedNumbers) { $errors.Add("Expected $expectedNumbers native number fields; found $($numberFields.Count).") }
-        if ($referenceTargets.Count -ne $expectedReferences) { $errors.Add("Expected $expectedReferences native references; found $($referenceTargets.Count).") }
+        if ($PartialManifest) {
+            # Equations and references outside a partial manifest (earlier batches) may already exist.
+            if ($numberFields.Count -lt $expectedNumbers) { $errors.Add("Expected at least $expectedNumbers native number fields; found $($numberFields.Count).") }
+            if ($referenceTargets.Count -lt $expectedReferences) { $errors.Add("Expected at least $expectedReferences native references; found $($referenceTargets.Count).") }
+        }
+        else {
+            if ($numberFields.Count -ne $expectedNumbers) { $errors.Add("Expected $expectedNumbers native number fields; found $($numberFields.Count).") }
+            if ($referenceTargets.Count -ne $expectedReferences) { $errors.Add("Expected $expectedReferences native references; found $($referenceTargets.Count).") }
+        }
         foreach ($equation in @($Manifest.equations)) {
             if ($plainText.Contains([string]$equation.marker)) { $errors.Add("Unresolved equation marker: $($equation.marker)") }
         }

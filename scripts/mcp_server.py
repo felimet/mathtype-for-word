@@ -86,7 +86,10 @@ TOOLS: list[dict[str, Any]] = [
         "description": (
             "Replace manifest markers in a DOCX with genuine Equation.DSMT4 MathType OLE equations. "
             "Numbered displays use MathType-native MTPlaceRef/SEQ fields in (1) format. References use "
-            "MathType's MTReference placeholder and GOTOBUTTON/REF pipeline, never Word numbered lists."
+            "MathType's MTReference placeholder and GOTOBUTTON/REF pipeline, never Word numbered lists. "
+            "Manifests larger than batch_size render in fresh Word sessions with checkpoints; a failed or "
+            "interrupted job resumes when called again with the same paths. The output is published only "
+            "after strict validation against the whole manifest."
         ),
         "inputSchema": {
             "type": "object",
@@ -95,6 +98,36 @@ TOOLS: list[dict[str, Any]] = [
                 "output_path": {"type": "string", "description": "Absolute path for the rendered DOCX."},
                 "manifest_path": {"type": "string", "description": "Absolute path to a schema v1 JSON manifest."},
                 "overwrite": {"type": "boolean", "default": False},
+                "batch_size": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "default": 40,
+                    "description": (
+                        "Unreferenced equations per Word session; referenced equations and all references always "
+                        "share the final session. 0 renders everything in one session."
+                    ),
+                },
+                "resume": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "Continue a failed or interrupted job for the same input, output and manifest.",
+                },
+                "background": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": (
+                        "Start a detached job and return at once; poll get_mathtype_render_status. "
+                        "Use it when the render may outlast the client's tool-call time limit."
+                    ),
+                },
+                "partial_manifest": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": (
+                        "The manifest covers only part of the document: markers outside it stay as warnings "
+                        "and number/reference counts are lower bounds. Its own markers must still resolve."
+                    ),
+                },
             },
             "required": ["input_path", "output_path", "manifest_path"],
             "additionalProperties": False,
@@ -119,6 +152,11 @@ TOOLS: list[dict[str, Any]] = [
             "properties": {
                 "document_path": {"type": "string", "description": "Absolute path to the DOCX."},
                 "manifest_path": {"type": "string", "description": "Optional absolute path to the render manifest."},
+                "partial_manifest": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Treat markers outside the manifest as warnings and counts as lower bounds.",
+                },
             },
             "required": ["document_path"],
             "additionalProperties": False,
@@ -127,6 +165,31 @@ TOOLS: list[dict[str, Any]] = [
             "title": "Validate MathType Word Document",
             "readOnlyHint": True,
             "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    },
+    {
+        "name": "get_mathtype_render_status",
+        "description": (
+            "Report a render_mathtype_word_document job by its output path: status (queued, running, completed, "
+            "failed, interrupted, none), equations done/total, chunks, retries, the last log lines and the final "
+            "result. Read-only unless cleanup=true, which deletes a completed, failed or interrupted job's state, "
+            "log and checkpoints; a cleaned failed or interrupted job cannot resume, and its next render starts over."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "output_path": {"type": "string", "description": "The output_path passed to the render call."},
+                "cleanup": {"type": "boolean", "default": False},
+            },
+            "required": ["output_path"],
+            "additionalProperties": False,
+        },
+        "annotations": {
+            "title": "MathType Render Job Status",
+            "readOnlyHint": False,
+            "destructiveHint": True,
             "idempotentHint": True,
             "openWorldHint": False,
         },
@@ -490,6 +553,7 @@ def _invoke_bridge(action: str, arguments: dict[str, Any], timeout: int | None =
         "presentation_path": "-InputPath",
         "output_path": "-OutputPath",
         "manifest_path": "-ManifestPath",
+        "validation_manifest_path": "-ValidationManifestPath",
     }
     for key, switch in mapping.items():
         value = arguments.get(key)
@@ -497,8 +561,10 @@ def _invoke_bridge(action: str, arguments: dict[str, Any], timeout: int | None =
             command.extend([switch, str(value)])
     if arguments.get("overwrite"):
         command.append("-Overwrite")
+    if arguments.get("partial_manifest"):
+        command.append("-PartialManifest")
 
-    effective_timeout = timeout or _default_timeout()
+    effective_timeout = max(timeout or 0, _default_timeout())
     word_pids_before = _process_pids("WINWORD.EXE")
     power_point_pids_before = _process_pids("POWERPNT.EXE")
     try:
@@ -562,20 +628,63 @@ def _invoke_bridge(action: str, arguments: dict[str, Any], timeout: int | None =
     return result
 
 
+def _render_word(arguments: dict[str, Any]) -> dict[str, Any]:
+    import mathtype_batch
+
+    paths = (str(arguments["input_path"]), str(arguments["output_path"]), str(arguments["manifest_path"]))
+    options = {
+        "bridge": _invoke_bridge,
+        "batch_size": int(arguments.get("batch_size", mathtype_batch.DEFAULT_BATCH_SIZE)),
+        "resume": bool(arguments.get("resume", True)),
+        "overwrite": bool(arguments.get("overwrite")),
+        "partial_manifest": bool(arguments.get("partial_manifest")),
+    }
+    try:
+        if arguments.get("background"):
+            return mathtype_batch.start_background(*paths, **options)
+        return mathtype_batch.render(*paths, **options)
+    except Exception as exc:  # tool boundary: any request failure becomes a tool result, not a protocol error
+        _log(traceback.format_exc())
+        return {"ok": False, "action": "render", "error": f"{type(exc).__name__}: {exc}"}
+
+
+def _refuse_during_render_job(action: str) -> dict[str, Any] | None:
+    """A render job releases the bridge lock between chunks; another editing action taking it there would make
+    the next chunk time out on the lock and fail the job."""
+    if action not in ("render-pptx", "configure-defaults"):
+        return None
+    import mathtype_batch
+
+    try:
+        mathtype_batch.refuse_concurrent_job()
+    except RuntimeError as exc:
+        return {"ok": False, "action": action, "error": str(exc)}
+    return None
+
+
+def _render_status(arguments: dict[str, Any]) -> dict[str, Any]:
+    import mathtype_batch
+
+    return mathtype_batch.status(str(arguments["output_path"]), bool(arguments.get("cleanup")))
+
+
 def _call_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     actions = {
         "probe_mathtype_word": "probe",
         "probe_mathtype_powerpoint": "probe-pptx",
         "configure_mathtype_word_defaults": "configure-defaults",
-        "render_mathtype_word_document": "render",
         "validate_mathtype_word_document": "validate",
         "update_mathtype_word_fields": "update",
         "render_mathtype_powerpoint_presentation": "render-pptx",
         "validate_mathtype_powerpoint_presentation": "validate-pptx",
     }
-    if name not in actions:
+    local = {"render_mathtype_word_document": _render_word, "get_mathtype_render_status": _render_status}
+    if name in local:
+        result = local[name](arguments)
+    elif name in actions:
+        result = _refuse_during_render_job(actions[name]) or _invoke_bridge(actions[name], arguments)
+    else:
         raise ValueError(f"Unknown tool: {name}")
-    result = _invoke_bridge(actions[name], arguments)
     rendered = json.dumps(result, ensure_ascii=False, indent=2)
     return {
         "content": [{"type": "text", "text": rendered}],
@@ -637,8 +746,10 @@ def _handle(message: dict[str, Any]) -> dict[str, Any] | None:
                 "serverInfo": {"name": SERVER_NAME, "version": SERVER_VERSION},
                 "instructions": (
                     "Use the matching Word or PowerPoint probe first. Preserve the source, render from a "
-                    "schema v1 manifest, then validate. DOCX numbering and references must remain "
-                    "MathType-native fields. PPTX equations are editable floating Equation.DSMT4 OLE objects."
+                    "schema v1 manifest, then validate. Large manifests render in resumable batches; use "
+                    "background=true with get_mathtype_render_status when a render may outlast the tool-call "
+                    "time limit. DOCX numbering and references must remain MathType-native fields. PPTX "
+                    "equations are editable floating Equation.DSMT4 OLE objects."
                 ),
             },
         )
