@@ -1,3 +1,5 @@
+# Starts the MCP server for registrations made before 1.4.0, which run this file; current registrations start
+# python scripts\mcp_server.py directly. Runs under Windows PowerShell 5.1 or PowerShell 7.
 [CmdletBinding()]
 param()
 

@@ -326,7 +326,9 @@ class BatchTests(unittest.TestCase):
                 calls.append(action)
                 return {"ok": True, "action": action}
 
-            with mock.patch.object(mcp_server, "_invoke_bridge", bridge):
+            # PowerShell 7 discovery is ServerInstallTests' subject; here it must not depend on the machine.
+            with mock.patch.object(mcp_server, "_invoke_bridge", bridge), \
+                    mock.patch.object(mcp_server, "_ensure_powershell", return_value=None):
                 for tool in ("render_mathtype_powerpoint_presentation", "configure_mathtype_word_defaults"):
                     self.assertTrue(mcp_server._call_tool(tool, {})["isError"], tool)
                 self.assertFalse(mcp_server._call_tool("validate_mathtype_word_document", {})["isError"])

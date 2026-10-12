@@ -84,6 +84,13 @@ def run_bridge(*arguments: str) -> tuple[int, dict]:
 
 
 class TimeoutCleanupTests(unittest.TestCase):
+    def setUp(self) -> None:
+        # PowerShell 7 discovery is ServerInstallTests' subject; here it must not depend on the machine.
+        for patch in (mock.patch.object(mcp_server, "_powershell_executable", return_value="pwsh.exe"),
+                      mock.patch.object(mcp_server, "_ensure_powershell", return_value=None)):
+            patch.start()
+            self.addCleanup(patch.stop)
+
     def timed_out_render(self, visible: set[int]) -> tuple[dict, list[int], mock.Mock]:
         snapshots = iter([{1}, set(), {1, 101, 200}, {300}])  # Word/PowerPoint before, then after
         terminated: list[int] = []

@@ -577,6 +577,9 @@ def main() -> int:
             job.state = _read_json(job.state_path) or {}
             if job.owned_by_this_process(args.job_token) and job.state.get("status") in ACTIVE_STATES:
                 job.save(status="failed", error=result["error"])
+    server = sys.modules.get("mcp_server")
+    if server is not None and server._powershell_install["notice"]:
+        result["notice"] = server._powershell_install["notice"]  # PowerShell 7 was installed, even if render then failed
     # ASCII escapes keep the line valid for callers that decode with any code page.
     sys.stdout.write(json.dumps(result) + "\n")
     return 0 if result.get("ok") else 1

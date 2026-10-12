@@ -6,8 +6,10 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import threading
 import traceback
 import uuid
 from pathlib import Path
@@ -17,6 +19,7 @@ from typing import Any, BinaryIO
 SERVER_NAME = "mathtype-for-word"
 SERVER_VERSION = "1.4.0"
 SCRIPT_PATH = Path(__file__).with_name("mathtype-word.ps1")
+ENSURE_POWERSHELL_PATH = Path(__file__).with_name("ensure-pwsh.ps1")
 DEFAULT_PROTOCOL_VERSION = "2025-06-18"
 WORD_COMMANDS_KEY = r"Software\Design Science\DSMT7\WordCommands"
 # Same names and paths as $script:WarningPreferenceNames, $script:WarningJournalPath and the bridge mutex.
@@ -31,6 +34,15 @@ WAIT_ABANDONED = 0x80
 JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
 JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
 _BRIDGE_JOB: int | None = None
+# One tool call waits this long for a PowerShell 7 install, then reports it as running: Codex ends a tool call
+# after 60 s by default. The installer itself may take this long on a slow connection.
+POWERSHELL_INSTALL_WAIT_SECONDS = 45
+POWERSHELL_INSTALL_TIMEOUT_SECONDS = 20 * 60
+POWERSHELL_VARIABLE = "MATHTYPE_WORD_POWERSHELL"
+POWERSHELL_INSTALL_FOLDER = r"%USERPROFILE%\.mathtype-for-word\PowerShell"  # ensure-pwsh.ps1's default InstallRoot
+MANUAL_POWERSHELL_INSTALL = "winget install --id Microsoft.PowerShell --source winget --installer-type wix"
+_powershell_install: dict[str, Any] = {"thread": None, "result": None, "notice": None}
+_powershell_install_lock = threading.Lock()
 
 
 TOOLS: list[dict[str, Any]] = [
@@ -330,8 +342,147 @@ def _log(message: str) -> None:
     print(f"[{SERVER_NAME}] {message}", file=sys.stderr, flush=True)
 
 
+def _usable_powershell(path: str) -> bool:
+    return Path(path).is_file() or shutil.which(path) is not None
+
+
+def _powershell_7_on_path() -> str | None:
+    """pwsh.exe on PATH when it is PowerShell 7 or later; PowerShell 6 also installs as pwsh.exe."""
+    found = shutil.which("pwsh.exe")
+    if not found:
+        return None
+    try:
+        completed = subprocess.run(
+            [found, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "$PSVersionTable.PSVersion.Major"],
+            capture_output=True, text=True, timeout=60, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        return found if int(completed.stdout.strip() or 0) >= 7 else None
+    except (OSError, ValueError, subprocess.TimeoutExpired):  # subprocess boundary: an unusable pwsh.exe
+        return None
+
+
+def _known_powershell() -> str | None:
+    """PowerShell 7 known without installing: a usable MATHTYPE_WORD_POWERSHELL, else PowerShell 7 on PATH."""
+    configured = os.environ.get(POWERSHELL_VARIABLE)
+    if configured and _usable_powershell(configured):
+        return configured
+    if configured:
+        _log(f"ignoring {POWERSHELL_VARIABLE}={configured}: no such program")
+        del os.environ[POWERSHELL_VARIABLE]
+    found = _powershell_7_on_path()
+    if found:
+        os.environ[POWERSHELL_VARIABLE] = found  # background render jobs inherit it
+    return found
+
+
+def _install_notice(result: dict[str, Any]) -> str:
+    return (
+        f"PowerShell 7 was not installed, so mathtype-for-word installed PowerShell {result.get('version')} for the "
+        f"current user in {result.get('folder')}, from {result.get('source')} (SHA-256 {result.get('sha256')} "
+        "verified, signed by Microsoft). Only this plugin uses it; PATH and system settings are unchanged, and new "
+        "releases of the plugin update it. Deleting that folder removes it."
+    )
+
+
+def _install_failure(result: dict[str, Any]) -> str:
+    return (
+        f"PowerShell 7 is required, and installing it automatically failed: {result.get('error')} Ask the user to "
+        f"install PowerShell 7 with the MSI installer (`{MANUAL_POWERSHELL_INSTALL}`, administrator rights), then "
+        "restart the agent."
+    )
+
+
+def _accept_installed_powershell(result: dict[str, Any]) -> None:
+    os.environ[POWERSHELL_VARIABLE] = str(result["path"])  # background render jobs inherit it
+    if result.get("installed"):
+        _powershell_install["notice"] = _install_notice(result)
+        _log(_powershell_install["notice"])
+
+
 def _powershell_executable() -> str:
-    return os.environ.get("MATHTYPE_WORD_POWERSHELL", "pwsh.exe")
+    """The pwsh.exe for every bridge call. The MCP server resolves it before a tool runs (_ensure_powershell); the
+    job runner's command line resolves it here, installing PowerShell 7 synchronously when it is missing."""
+    found = _known_powershell()
+    if found:
+        return found
+    result = _run_ensure_powershell()
+    if not result.get("ok"):
+        raise RuntimeError(_install_failure(result))
+    _accept_installed_powershell(result)
+    return str(result["path"])
+
+
+def _windows_powershell() -> str:
+    # Windows PowerShell 5.1 ships with every supported Windows; the absolute path keeps PATH from substituting it.
+    return str(Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe")
+
+
+def _run_ensure_powershell() -> dict[str, Any]:
+    command = [
+        _windows_powershell(), "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+        "-File", str(ENSURE_POWERSHELL_PATH),
+    ]
+    try:
+        completed = _run_bridge(command, POWERSHELL_INSTALL_TIMEOUT_SECONDS)
+    except (OSError, subprocess.TimeoutExpired) as exc:  # subprocess boundary
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+    if completed.stderr.strip():
+        _log(completed.stderr.strip())
+    lines = [line.strip() for line in completed.stdout.splitlines() if line.strip()]
+    try:
+        return json.loads(lines[-1])
+    except (IndexError, json.JSONDecodeError):
+        # An execution policy that only allows signed scripts stops Windows PowerShell before the script prints JSON.
+        detail = completed.stderr.strip().splitlines()[0] if completed.stderr.strip() else f"exit {completed.returncode}"
+        return {"ok": False, "error": f"ensure-pwsh.ps1 returned no JSON ({detail})."}
+
+
+def _install_powershell() -> None:
+    _powershell_install["result"] = _run_ensure_powershell()
+
+
+def _ensure_powershell() -> dict[str, Any] | None:
+    """Find PowerShell 7 for the bridge, installing it for the current user when it is missing.
+
+    Returns None when the bridge can run, otherwise the tool result to send instead. The install runs in a thread
+    so a tool call never outlasts the client's time limit; a later call picks up its result. The call that sees a
+    new install finish returns at once with the notice instead of also running the bridge, so the reply carrying
+    the notice is never late enough for the client to drop it.
+    """
+    if _known_powershell():
+        return None
+    with _powershell_install_lock:
+        if _powershell_install["thread"] is None:
+            _log("PowerShell 7 is not on PATH; looking for it, and installing it when it is missing")
+            _powershell_install["result"] = None
+            _powershell_install["thread"] = threading.Thread(target=_install_powershell, daemon=True)
+            _powershell_install["thread"].start()
+        thread = _powershell_install["thread"]
+    thread.join(POWERSHELL_INSTALL_WAIT_SECONDS)
+    if thread.is_alive():
+        return {
+            "ok": False,
+            "error": (
+                f"PowerShell 7 is missing, so mathtype-for-word is installing PowerShell 7.6 LTS for the current "
+                f"user into {POWERSHELL_INSTALL_FOLDER}, from the official release on GitHub (about 106 MB to "
+                "download, about 300 MB on disk; no administrator rights, PATH unchanged). Tell the user, then call "
+                "this tool again in a minute."
+            ),
+            "powershell": {"status": "installing"},
+        }
+    with _powershell_install_lock:
+        result = _powershell_install["result"] or {"ok": False, "error": "the installer stopped without a result"}
+        _powershell_install["thread"] = None  # a failed install is retried by the next call
+    if not result.get("ok"):
+        return {"ok": False, "error": _install_failure(result), "powershell": {"status": "failed"}}
+    _accept_installed_powershell(result)
+    if result.get("installed"):
+        return {
+            "ok": False,
+            "error": "PowerShell 7 was just installed. Tell the user the notice, then call this tool again.",
+            "powershell": {"status": "installed", "path": result.get("path"), "version": result.get("version")},
+        }
+    return None
 
 
 def _default_timeout() -> int:
@@ -629,6 +780,8 @@ def _invoke_bridge(action: str, arguments: dict[str, Any], timeout: int | None =
     power_point_pids_before = _process_pids("POWERPNT.EXE")
     try:
         completed = _run_bridge(command, effective_timeout)
+    except OSError as exc:  # subprocess boundary: PowerShell 7 vanished, or application control blocks it
+        return {"ok": False, "action": action, "error": f"Could not start PowerShell 7 ({command[0]}): {exc}"}
     except subprocess.TimeoutExpired as exc:
         stderr = exc.stderr or ""
         if isinstance(stderr, bytes):
@@ -741,12 +894,18 @@ def _call_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         "validate_mathtype_powerpoint_presentation": "validate-pptx",
     }
     local = {"render_mathtype_word_document": _render_word, "get_mathtype_render_status": _render_status}
-    if name in local:
-        result = local[name](arguments)
-    elif name in actions:
-        result = _refuse_during_render_job(actions[name]) or _invoke_bridge(actions[name], arguments)
-    else:
+    if name not in local and name not in actions:
         raise ValueError(f"Unknown tool: {name}")
+    missing_powershell = None if name == "get_mathtype_render_status" else _ensure_powershell()
+    if missing_powershell is not None:
+        result = missing_powershell
+    elif name in local:
+        result = local[name](arguments)
+    else:
+        result = _refuse_during_render_job(actions[name]) or _invoke_bridge(actions[name], arguments)
+    if _powershell_install["notice"]:
+        result["notice"] = _powershell_install["notice"]
+        _powershell_install["notice"] = None  # told once; the agent relays it to the user
     rendered = json.dumps(result, ensure_ascii=False, indent=2)
     return {
         "content": [{"type": "text", "text": rendered}],
@@ -811,7 +970,8 @@ def _handle(message: dict[str, Any]) -> dict[str, Any] | None:
                     "schema v1 manifest, then validate. Large manifests render in resumable batches; use "
                     "background=true with get_mathtype_render_status when a render may outlast the tool-call "
                     "time limit. DOCX numbering and references must remain MathType-native fields. PPTX "
-                    "equations are editable floating Equation.DSMT4 OLE objects."
+                    "equations are editable floating Equation.DSMT4 OLE objects. When a result has a notice, "
+                    "tell the user its text."
                 ),
             },
         )

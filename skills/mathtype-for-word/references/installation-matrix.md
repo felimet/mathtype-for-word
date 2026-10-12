@@ -7,7 +7,8 @@
 - Desktop **MathType for Windows** with its Word template and PowerPoint add-in enabled. This repo is verified against **MathType-win-zh-7.11.1.462** (`ProductVersion 7.11.1.462`). Download it from <https://mathtype.tw/download/>.
 - Do not substitute **MathType Add-In for Microsoft 365**. The task-pane add-in lacks the desktop OLE/COM integration required here.
 - Python 3 available as `python.exe` or `python` on `PATH`.
-- PowerShell 7 or later, available as Windows `pwsh.exe`. Windows PowerShell 5.1 is not supported because MathType COM macro calls can block under that host.
+- PowerShell 7 or later, available as Windows `pwsh.exe`. Windows PowerShell 5.1 is not supported for the bridge because MathType COM macro calls can block under that host. It only starts the MCP server and the PowerShell 7 installer.
+- When PowerShell 7 is missing, the MCP server installs it for the current user on the first tool call that needs it, into `%USERPROFILE%\.mathtype-for-word\PowerShell\<version>`, and reports it in the result's `notice`. Without MCP, run `powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/ensure-pwsh.ps1`.
 
 ## Terminal selection
 
@@ -20,7 +21,7 @@ Detect the active terminal and `pwsh.exe` before changing agent configuration:
 | CMD | Invoke `pwsh.exe` with the same arguments. |
 | Windows PowerShell 5.1 | Leave 5.1, open Git Bash or CMD, and invoke Windows `pwsh.exe`. |
 | WSL Bash | Invoke Windows `pwsh.exe`; Linux `pwsh` cannot drive Windows Office COM. |
-| No supported terminal or no `pwsh.exe` | Stop and prompt the user to install PowerShell 7 using <https://learn.microsoft.com/zh-tw/powershell/scripting/install/microsoft-update-faq?view=powershell-7.6>. |
+| No `pwsh.exe` | Run `powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/ensure-pwsh.ps1`, use the `path` it prints in place of `pwsh.exe`, and tell the user what it installed. If it fails, stop and prompt the user to install PowerShell 7 using <https://learn.microsoft.com/zh-tw/powershell/scripting/install/microsoft-update-faq?view=powershell-7.6>. |
 
 CMD and Git Bash are terminal hosts, not replacements for the PowerShell 7 runtime. A PowerShell 5.1 machine still requires `pwsh.exe` before this bridge can run.
 
@@ -45,7 +46,7 @@ Copy `skills/mathtype-for-word` to either supported skill root:
 Register and inspect the local MCP server:
 
 ```console
-codex mcp add mathtype-for-word -- pwsh.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "<REPO_ROOT>\scripts\run-mcp.ps1"
+codex mcp add mathtype-for-word -- python "<REPO_ROOT>\scripts\mcp_server.py"
 codex mcp get mathtype-for-word
 ```
 
@@ -62,7 +63,7 @@ Copy the skill to:
 Register and inspect the local MCP server:
 
 ```console
-claude mcp add --scope user mathtype-for-word -- pwsh.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "<REPO_ROOT>\scripts\run-mcp.ps1"
+claude mcp add --scope user mathtype-for-word -- python "<REPO_ROOT>\scripts\mcp_server.py"
 claude mcp get mathtype-for-word
 ```
 
@@ -81,16 +82,8 @@ Equivalent server entry:
 {
   "mcpServers": {
     "mathtype-for-word": {
-      "command": "pwsh.exe",
-      "args": [
-        "-NoLogo",
-        "-NoProfile",
-        "-NonInteractive",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-File",
-        "<REPO_ROOT>\\scripts\\run-mcp.ps1"
-      ]
+      "command": "python",
+      "args": ["<REPO_ROOT>\\scripts\\mcp_server.py"]
     }
   }
 }

@@ -23,7 +23,7 @@ When an AI agent edits Word, PowerPoint, or MathType content, it must operate si
 - Windows 10 or 11.
 - Microsoft Word and PowerPoint desktop with COM automation.
 - Python 3 on `PATH`.
-- PowerShell 7 or later as `pwsh.exe`.
+- PowerShell 7 or later as `pwsh.exe`. When it is missing, the plugin installs PowerShell 7.6 LTS for the current user and tells you; see [PowerShell 7](#powershell-7).
 - Desktop **MathType for Windows** from the [MathType download page](https://mathtype.tw/download/).
 
 This project is developed and tested with **MathType-win-zh-7.11.1.462** (`ProductVersion 7.11.1.462`). Install **MathType for Windows**, not only **MathType Add-In for Microsoft 365**. The Microsoft 365 task-pane add-in does not provide the desktop OLE, Word template, PowerPoint add-in, and COM workflow used here.
@@ -41,7 +41,7 @@ The Office bridge is a Windows PowerShell 7 script. The surrounding terminal may
 | WSL Bash | Invoke Windows `pwsh.exe`; Linux `pwsh` cannot automate Windows Office COM. |
 | CMD | Invoke `pwsh.exe` with the same arguments. |
 | Windows PowerShell 5.1 | Do not run the bridge in 5.1. Switch to Git Bash or CMD and invoke `pwsh.exe`. |
-| No supported terminal or no `pwsh.exe` | Stop and ask the user to install PowerShell 7. See the [Microsoft PowerShell update FAQ](https://learn.microsoft.com/zh-tw/powershell/scripting/install/microsoft-update-faq?view=powershell-7.6). |
+| No `pwsh.exe` | Let the MCP server install PowerShell 7, or run `scripts/ensure-pwsh.ps1` as shown below. |
 
 The following command works from PowerShell 7, Git Bash, and CMD:
 
@@ -49,12 +49,28 @@ The following command works from PowerShell 7, Git Bash, and CMD:
 pwsh.exe -NoProfile -ExecutionPolicy Bypass -File scripts/mathtype-word.ps1 -Action probe
 ```
 
+### PowerShell 7
+
+The MCP server is a Python program, and no PowerShell 7 is needed to start it: the plugin's launch command runs under Windows PowerShell 5.1 (`powershell.exe`), which every supported Windows has, and the registrations above start `python` directly. The bridge runs in PowerShell 7. When no PowerShell 7 exists, the first tool call that needs it installs PowerShell 7.6.6 (LTS) for the current user and tells you what it installed:
+
+- The official ZIP release of PowerShell from GitHub, accepted only when its SHA-256 matches the hash pinned in `scripts/ensure-pwsh.ps1` and `pwsh.exe` is validly signed by Microsoft.
+- Installed into `%USERPROFILE%\.mathtype-for-word\PowerShell\<version>`. No administrator rights, prompt, PATH change, or registry change; only this plugin uses it, and deleting the folder removes it. It is updated only with a new release of this plugin.
+- A download of about 106 MB that takes about 300 MB on disk. While it runs, a tool call answers that PowerShell 7 is being installed and where; the call after it finishes reports what was installed, and the next one does the work.
+
+Without MCP, run the same installer from any terminal; it prints the `pwsh.exe` path to use, and the download can take several minutes. `python scripts/mathtype_batch.py render` installs it the same way when needed:
+
+```console
+powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/ensure-pwsh.ps1
+```
+
+When the download is blocked (offline, a proxy, or a policy), install PowerShell 7 yourself, for example with the MSI installer (`winget install --id Microsoft.PowerShell --source winget --installer-type wix`, administrator rights), or see the [Microsoft PowerShell update FAQ](https://learn.microsoft.com/zh-tw/powershell/scripting/install/microsoft-update-faq?view=powershell-7.6).
+
 ## Install with an AI agent
 
 If you want to use MathType for Word and PowerPoint in Claude Code, Claude Desktop, Codex, or ChatGPT Desktop, paste the following prompt. The agent will configure it for the current environment:
 
 ```text
-Install or upgrade the MathType for Word and PowerPoint toolkit from https://github.com/felimet/mathtype-for-word. Detect my available terminal and use PowerShell 7, Bash on Windows including Git Bash, or CMD. Do not run the Office bridge under Windows PowerShell 5.1; if 5.1 is active, switch to Git Bash or CMD and invoke Windows pwsh.exe. From WSL Bash, invoke Windows pwsh.exe rather than Linux pwsh. If no supported terminal or pwsh.exe is available, stop and tell me to install PowerShell 7 using https://learn.microsoft.com/zh-tw/powershell/scripting/install/microsoft-update-faq?view=powershell-7.6. Verify desktop MathType for Windows ProductVersion 7.11.1.462 plus Microsoft Word and PowerPoint desktop, install the portable skill, register the local stdio MCP server, run both MathType probes and the repository tests, preserve existing agent configuration, and report every changed file. Do not claim success unless the outputs contain editable Equation.DSMT4 objects and validation returns ok: true.
+Install or upgrade the MathType for Word and PowerPoint toolkit from https://github.com/felimet/mathtype-for-word. Detect my available terminal and use PowerShell 7, Bash on Windows including Git Bash, or CMD. Do not run the Office bridge under Windows PowerShell 5.1; if 5.1 is active, switch to Git Bash or CMD and invoke Windows pwsh.exe. From WSL Bash, invoke Windows pwsh.exe rather than Linux pwsh. If pwsh.exe is missing, run scripts/ensure-pwsh.ps1 with Windows powershell.exe, which installs PowerShell 7 for the current user, and tell me what it installed; if it fails, stop and tell me to install PowerShell 7 using https://learn.microsoft.com/zh-tw/powershell/scripting/install/microsoft-update-faq?view=powershell-7.6. Verify desktop MathType for Windows ProductVersion 7.11.1.462 plus Microsoft Word and PowerPoint desktop, install the portable skill, register the local stdio MCP server, run both MathType probes and the repository tests, preserve existing agent configuration, and report every changed file. Do not claim success unless the outputs contain editable Equation.DSMT4 objects and validation returns ok: true.
 ```
 
 Then tell your agent which DOCX or PPTX file to edit and describe the required equations.
@@ -70,7 +86,7 @@ Replace `<REPO_ROOT>` with the absolute local checkout path. Preserve existing M
 Copy `skills/mathtype-for-word` to `%USERPROFILE%\.codex\skills\mathtype-for-word` or `%USERPROFILE%\.agents\skills\mathtype-for-word`, then register the server:
 
 ```console
-codex mcp add mathtype-for-word -- pwsh.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "<REPO_ROOT>\scripts\run-mcp.ps1"
+codex mcp add mathtype-for-word -- python "<REPO_ROOT>\scripts\mcp_server.py"
 codex mcp get mathtype-for-word
 ```
 
@@ -81,7 +97,7 @@ The release also contains `.codex-plugin/plugin.json` and `dist/mathtype-for-wor
 Copy `skills/mathtype-for-word` to `%USERPROFILE%\.claude\skills\mathtype-for-word`, then register the server:
 
 ```console
-claude mcp add --scope user mathtype-for-word -- pwsh.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "<REPO_ROOT>\scripts\run-mcp.ps1"
+claude mcp add --scope user mathtype-for-word -- python "<REPO_ROOT>\scripts\mcp_server.py"
 claude mcp get mathtype-for-word
 ```
 
@@ -95,8 +111,8 @@ Upload `dist/mathtype-for-word.skill` from **Customize > Skills**. Then merge th
 {
   "mcpServers": {
     "mathtype-for-word": {
-      "command": "pwsh.exe",
-      "args": ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "<REPO_ROOT>\\scripts\\run-mcp.ps1"]
+      "command": "python",
+      "args": ["<REPO_ROOT>\\scripts\\mcp_server.py"]
     }
   }
 }

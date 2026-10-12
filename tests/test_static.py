@@ -82,6 +82,30 @@ class StaticContractTests(unittest.TestCase):
         self.assertIn("PLUGIN_ROOT", claude)
         self.assertIn("${PLUGIN_ROOT}", codex)
 
+    def test_server_starts_without_powershell_7_and_bridge_requires_it(self) -> None:
+        # The server starts without PowerShell 7 and can install it: the plugin launches it through Windows
+        # PowerShell 5.1, which ships with Windows, inline because an execution policy can refuse script files.
+        for name, command in ((".mcp.json", "powershell.exe"), (".codex-mcp.json", "python")):
+            server = json.loads((ROOT / name).read_text(encoding="utf-8"))["mcpServers"]["mathtype-for-word"]
+            self.assertEqual(server["command"], command, name)
+            self.assertNotIn("-File", server["args"], name)
+        bridge = (ROOT / "scripts" / "mathtype-word.ps1").read_text(encoding="utf-8")
+        self.assertTrue(bridge.startswith("#Requires -Version 7.0\n"))
+        windows_powershell = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+        if not windows_powershell.is_file():
+            self.skipTest("Windows PowerShell 5.1 is not available")
+        scripts = [ROOT / "scripts" / "run-mcp.ps1", ROOT / "scripts" / "ensure-pwsh.ps1",
+                   ROOT / "skills" / "mathtype-for-word" / "scripts" / "invoke-bridge.ps1"]
+        check = "; ".join(
+            f"$e = $null; $null = [Management.Automation.Language.Parser]::ParseFile('{path}', [ref]$null, [ref]$e); "
+            f"if ($e.Count) {{ '{path.name}: ' + ($e.Message -join ' | ') }}"
+            for path in scripts
+        )
+        completed = subprocess.run([str(windows_powershell), "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", check],
+                                   capture_output=True, text=True, timeout=60)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(completed.stdout.strip(), "")
+
     def test_no_todo_placeholders(self) -> None:
         excluded = {"README.md"}
         findings: list[str] = []
