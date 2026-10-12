@@ -142,6 +142,60 @@ TOOLS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "scan_mathtype_candidates",
+        "description": (
+            "Open a DOCX read-only and list the paragraphs that hold plain-text mathematics: Greek letters, "
+            "operators, Unicode or Word sub/superscripts, TeX-like text, function calls, typed equation references "
+            "and Word built-in equations. Writes a JSON candidates file with Word's paragraph numbers, the exact "
+            "paragraph text and these signals. Decide each span yourself, then call mark_mathtype_document."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "document_path": {"type": "string", "description": "Absolute path to the DOCX."},
+                "candidates_path": {"type": "string", "description": "Absolute path for the new candidates .json."},
+                "overwrite": {"type": "boolean", "default": False},
+            },
+            "required": ["document_path", "candidates_path"],
+            "additionalProperties": False,
+        },
+        "annotations": {
+            "title": "Scan Plain-Text Mathematics",
+            "readOnlyHint": False,
+            "destructiveHint": True,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    },
+    {
+        "name": "mark_mathtype_document",
+        "description": (
+            "Replace exact text spans of a DOCX with {{MATH:id}} or {{EQREF:id}} markers and save a new DOCX for "
+            "render_mathtype_word_document; the source is opened read-only. marks_path is a JSON file "
+            '{"schema_version": 1, "marks": [{"paragraph": n, "text": "exact span", "occurrence": 1, '
+            '"marker": "{{MATH:id}}"}]} using paragraph numbers and text from scan_mathtype_candidates. '
+            "Every span must be found exactly as given, or nothing is saved."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "document_path": {"type": "string", "description": "Absolute path to the source DOCX."},
+                "output_path": {"type": "string", "description": "Absolute path for the marked DOCX."},
+                "marks_path": {"type": "string", "description": "Absolute path to the marks JSON."},
+                "overwrite": {"type": "boolean", "default": False},
+            },
+            "required": ["document_path", "output_path", "marks_path"],
+            "additionalProperties": False,
+        },
+        "annotations": {
+            "title": "Mark Plain-Text Mathematics",
+            "readOnlyHint": False,
+            "destructiveHint": True,
+            "idempotentHint": False,
+            "openWorldHint": False,
+        },
+    },
+    {
         "name": "validate_mathtype_word_document",
         "description": (
             "Open a DOCX read-only and verify genuine Equation.DSMT4 objects, simple MathType-native "
@@ -556,6 +610,8 @@ def _invoke_bridge(action: str, arguments: dict[str, Any], timeout: int | None =
         "output_path": "-OutputPath",
         "manifest_path": "-ManifestPath",
         "validation_manifest_path": "-ValidationManifestPath",
+        "candidates_path": "-OutputPath",
+        "marks_path": "-MarksPath",
     }
     for key, switch in mapping.items():
         value = arguments.get(key)
@@ -677,6 +733,8 @@ def _call_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         "probe_mathtype_word": "probe",
         "probe_mathtype_powerpoint": "probe-pptx",
         "configure_mathtype_word_defaults": "configure-defaults",
+        "scan_mathtype_candidates": "scan",
+        "mark_mathtype_document": "mark",
         "validate_mathtype_word_document": "validate",
         "update_mathtype_word_fields": "update",
         "render_mathtype_powerpoint_presentation": "render-pptx",

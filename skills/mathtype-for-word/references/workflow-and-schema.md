@@ -138,6 +138,25 @@ Expected output structure:
 
 Prefer markers that are visually obvious, unique, and absent from normal prose. Put a display marker alone in its paragraph. An inline marker remains inside the sentence.
 
+A draft with plain-text mathematics needs markers before rendering. `scan_mathtype_candidates` (bridge action `scan`) opens the draft read-only and writes a candidates JSON. It lists every paragraph with math signals: Greek letters, operators, Unicode or Word sub/superscripts, TeX-like text, function calls, typed references such as `Eq. (2)`, `式（2）` or `(2)式`, and Word built-in equations. Each entry gives Word's paragraph number (table cells included), the exact paragraph text, and those signals. The signals are hints; decide each span yourself, and use the `formatted` runs to restore scripts in TeX (`x2` with a superscript `2` is `x^2`). Each run gives `kind`, `text`, and `offset`, its start index in the paragraph's `text`, in document order; match runs to the text by `offset`. `formatted_incomplete` lists paragraphs whose sub/superscripts Word could not list completely; read those in Word before writing their TeX.
+
+Then write a marks file and call `mark_mathtype_document` (bridge action `mark`):
+
+```json
+{
+  "schema_version": 1,
+  "marks": [
+    {"paragraph": 12, "text": "E = mc2", "marker": "{{MATH:mass_energy}}"},
+    {"paragraph": 15, "text": "(1)", "occurrence": 1, "marker": "{{EQREF:mass_energy}}"}
+  ]
+}
+```
+
+- `text` is an exact span of that paragraph's text, at most 255 characters with each `^` counted twice; `occurrence` (default 1) picks among repeats within the paragraph. Keep paragraph marks, note references (`\u0002`), objects (`\u0001`) and page, column or section breaks (`\f`, `\u000e`) out of the span; mark rejects them and spans that cover Word equations or fields.
+- For a reference, mark only the parenthesized number, such as `(1)` or `（1）`. A `reference` signal such as `Eq. (2)` only locates it: `Eq.`, `Equation`, and `式` are prose and stay outside the marker, because MathType renders the reference as `(n)` alone.
+- The source is opened read-only and never replaced (`output_path` must differ). Every span is located before any change, overlapping spans are rejected, and the marked copy is saved only when each marker occurs exactly once.
+- A display equation's marker must end up alone in its paragraph, and mark cannot create a paragraph break. Mark the whole paragraph text only when the paragraph holds nothing but the formula. When the formula shares its paragraph with prose (lines joined by Shift+Enter, `\u000b` in the scan text, included), ask the user to give it its own paragraph, or keep the inline layout if the user agrees, then scan again, because paragraph numbers change.
+
 Good:
 
 ```text

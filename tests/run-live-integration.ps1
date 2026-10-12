@@ -82,6 +82,60 @@ try {
         throw "Status output_path did not round-trip: $($status.output_path)"
     }
 
+    # A draft with plain-text mathematics: scan it, mark what the scan found, then render the marked copy.
+    $plainInput = Join-Path $testDirectory 'plain.docx'
+    $candidatesPath = Join-Path $testDirectory 'candidates.json'
+    $marksPath = Join-Path $testDirectory 'marks.json'
+    $markedPath = Join-Path $testDirectory 'marked.docx'
+    $plainOutput = Join-Path $testDirectory 'plain-output.docx'
+    & (Join-Path $PSScriptRoot 'create-live-fixture.ps1') -OutputPath $plainInput -PlainText
+    $scan = & pwsh.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $bridge `
+        -Action scan -InputPath $plainInput -OutputPath $candidatesPath | Select-Object -Last 1 | ConvertFrom-Json
+    if (-not $scan.ok) { throw "Scan failed: $($scan.error)" }
+    $candidates = Get-Content -Raw -LiteralPath $candidatesPath | ConvertFrom-Json
+    function Find-Candidate([string]$Text) {
+        $match = @($candidates.paragraphs | Where-Object { $_.text.Contains($Text) })
+        if ($match.Count -ne 1) { throw "Scan listed $($match.Count) paragraph(s) containing '$Text'." }
+        return $match[0]
+    }
+    $energy = Find-Candidate 'E = mc2'
+    $roots = Find-Candidate '4ac'
+    $reference = Find-Candidate 'Eq. (1)'
+    $pythagoras = Find-Candidate 'a^2'
+    $water = Find-Candidate 'H2O'
+    $sum = Find-Candidate ([string][char]0x03B1 + ' + ' + [char]0x03B2)
+    $area = Find-Candidate 'area m2'
+    if ($energy.formatted -isnot [array] -or $reference.formatted -isnot [array]) { throw 'Scan lists must stay JSON arrays.' }
+    if (@($candidates.formatted_incomplete).Count -ne 0) { throw "Scan could not list every script: $($candidates.formatted_incomplete -join ',')" }
+    $offset = $energy.text.IndexOf('mc2') + 2
+    if (@($energy.formatted | Where-Object { $_.kind -eq 'superscript' -and $_.text -eq '2' -and $_.offset -eq $offset }).Count -ne 1) { throw 'Scan missed the Word superscript or its offset.' }
+    if (@($area.formatted | Where-Object { $_.kind -eq 'superscript' -and $_.offset -eq 6 }).Count -ne 1) { throw 'Scan missed the superscript at the end of a table cell.' }
+    if (@($water.formatted | Where-Object { $_.kind -eq 'subscript' -and $_.text -eq '2' }).Count -ne 1) { throw 'Scan missed the subscript after the table.' }
+    if (@($reference.signals | Where-Object kind -eq 'reference').Count -ne 1) { throw 'Scan missed the typed equation reference.' }
+    if (-not $sum.in_table -or @($sum.signals | Where-Object kind -eq 'greek').Count -ne 2) { throw 'Scan missed the table cell.' }
+    @{
+        schema_version = 1
+        marks = @(
+            @{ paragraph = $energy.paragraph; text = 'E = mc2'; marker = '{{MATH:energy}}' }
+            @{ paragraph = $roots.paragraph; text = $roots.text; marker = '{{MATH:roots}}' }
+            @{ paragraph = $reference.paragraph; text = '(1)'; marker = '{{EQREF:roots}}' } # Eq. stays in the prose
+            @{ paragraph = $pythagoras.paragraph; text = 'a^2 + b^2 = c^2'; marker = '{{MATH:pythagoras}}' }
+            @{ paragraph = $sum.paragraph; text = $sum.text; marker = '{{MATH:sum}}' }
+        )
+    } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $marksPath -Encoding utf8
+    $mark = & pwsh.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $bridge `
+        -Action mark -InputPath $plainInput -OutputPath $markedPath -MarksPath $marksPath | Select-Object -Last 1 | ConvertFrom-Json
+    if (-not $mark.ok -or $mark.marks -ne 5) { throw "Mark failed: $($mark.error)" }
+    if (-not ((Get-DocumentXml -Path $markedPath) -replace '<[^>]+>', '').Contains('As shown in Eq. {{EQREF:roots}}')) { throw 'Marking the reference changed its prose.' }
+    $plainManifest = Join-Path $PSScriptRoot 'fixtures\live-plain-manifest.json'
+    $plainRender = & pwsh.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $bridge `
+        -Action render -InputPath $markedPath -OutputPath $plainOutput -ManifestPath $plainManifest | Select-Object -Last 1 | ConvertFrom-Json
+    if (-not $plainRender.ok) { throw "Render of the marked draft failed: $($plainRender.error)" }
+    $counts = $plainRender.validation.counts
+    if ($counts.mathtype_objects -ne 4 -or $counts.native_number_fields -ne 1 -or $counts.native_reference_fields -ne 1) {
+        throw "Unexpected counts for the marked draft: $($counts | ConvertTo-Json -Compress)"
+    }
+
     [ordered]@{
         ok = $true
         input = $inputPath
@@ -90,6 +144,8 @@ try {
         validation = $validation
         batched_chunks = $batched.chunks
         batched_validation = $batchedValidation
+        plain_scan = $scan
+        plain_render_counts = $plainRender.validation.counts
     } | ConvertTo-Json -Depth 12
 }
 finally {

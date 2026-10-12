@@ -134,8 +134,18 @@ class TimeoutCleanupTests(unittest.TestCase):
         self.assertIn("-AnchorNumbers", command)
         self.assertEqual(command[command.index("-ValidationManifestPath") + 1], "C:\\m.json")
         parameters = BRIDGE.read_text(encoding="utf-8").split("Set-StrictMode", 1)[0]
-        for name in ("$PartialManifest", "$ValidationManifestPath", "$AnchorNumbers"):
+        for name in ("$PartialManifest", "$ValidationManifestPath", "$AnchorNumbers", "$MarksPath"):
             self.assertIn(name, parameters)
+
+    def test_scan_and_mark_paths_reach_the_bridge(self) -> None:
+        done = subprocess.CompletedProcess([], 0, stdout='{"ok": true}\n', stderr="")
+        with mock.patch.object(mcp_server, "_run_bridge", return_value=done) as run:
+            mcp_server._call_tool("scan_mathtype_candidates", {"document_path": "C:\\d.docx", "candidates_path": "C:\\c.json"})
+            mcp_server._call_tool("mark_mathtype_document", {"document_path": "C:\\d.docx", "output_path": "C:\\m.docx",
+                                                             "marks_path": "C:\\k.json"})
+        scan, mark = (call.args[0] for call in run.call_args_list)
+        self.assertEqual((scan[scan.index("-Action") + 1], scan[scan.index("-OutputPath") + 1]), ("scan", "C:\\c.json"))
+        self.assertEqual((mark[mark.index("-Action") + 1], mark[mark.index("-MarksPath") + 1]), ("mark", "C:\\k.json"))
 
 
 class BridgeProcessTests(unittest.TestCase):
@@ -386,7 +396,7 @@ class BridgeHelperTests(unittest.TestCase):
                 "  $definition = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst]"
                 " -and $n.Name -eq $name }, $true)\n"
                 "  . ([scriptblock]::Create($definition.Extent.Text))\n}\n"
-                "foreach ($name in '$script:AnchorPrefix', '$script:ClipboardAttempts',"
+                "foreach ($name in '$script:AnchorPrefix', '$script:MathSignals', '$script:ClipboardAttempts',"
                 " '$script:ClipboardRetryMilliseconds') {\n"
                 "  $assignment = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.AssignmentStatementAst]"
                 " -and $n.Left.Extent.Text -eq $name }, $true)\n"
@@ -407,6 +417,72 @@ class BridgeHelperTests(unittest.TestCase):
         self.assertNotEqual(names[0], names[1])
         for name in names:
             self.assertRegex(name, r"^_MTEq[0-9a-f]{32}$")  # Word allows 40 letters, digits and underscores
+
+    def test_math_signals_flag_plain_text_mathematics_only(self) -> None:
+        code = ("foreach ($text in 'The energy E = mc\u00b2 holds.', 'see Eq. (3) and \u5f0f\uff082\uff09', "
+                "'\u03c3_{ij} and sin(x)', 'Plain prose without math.', '\u7531\u7b2c(3)\u5f0f\u53ef\u77e5', "
+                "'\u5176\u4e2dsin(x)\u70ba\u5982Eq. (3)') {\n"
+                "  $values = @($script:MathSignals.Matches($text) | ForEach-Object Value)\n"
+                "  ConvertTo-Json -InputObject $values -Compress -EscapeHandling EscapeNonAscii\n}")
+        # ASCII JSON: this pipe is decoded with the console code page, which has no superscript two.
+        lines = ["|".join(json.loads(line)) for line in self.run_functions((), code).splitlines()]
+        self.assertEqual(len(lines), 6)
+        self.assertIn("=", lines[0])
+        self.assertIn("\u00b2", lines[0])
+        self.assertIn("Eq. (3)", lines[1])
+        self.assertIn("\u5f0f\uff082\uff09", lines[1])
+        self.assertIn("sin(", lines[2])
+        self.assertEqual(lines[3], "")
+        self.assertIn("\u7b2c(3)\u5f0f", lines[4])  # the number before \u5f0f, common in Taiwanese papers
+        self.assertIn("sin(", lines[5])  # no word boundary between CJK and Latin letters
+        self.assertIn("Eq. (3)", lines[5])
+
+    def test_marked_text_escapes_word_find_carets(self) -> None:
+        # Word Find reads ^ as a special-character prefix even without wildcards; only ^^ is a literal caret.
+        code = (
+            "$global:sent = [Collections.Generic.List[string]]::new()\n"
+            "$find = [pscustomobject]@{ Text = ''; MatchCase = $false; MatchWholeWord = $false; MatchWildcards = $true;"
+            " Forward = $false; Wrap = 1; Format = $true }\n"
+            "$find | Add-Member ScriptMethod ClearFormatting { }\n"
+            "$find | Add-Member ScriptMethod Execute { $global:sent.Add($this.Text); $false }\n"
+            "$range = [pscustomobject]@{ Find = $find; Start = 0; End = 0; Text = '' }\n"
+            "$script:Document = [pscustomobject]@{}\n"
+            "$script:Document | Add-Member ScriptMethod Range { param($s, $e) $range }\n"
+            "$null = Find-TextInRange -Start 0 -End 20 -Text 'a^2 + b^{2}' -Occurrence 1\n"
+            "$global:sent[0]"
+        )
+        sent = self.run_functions(("Find-TextInRange", "Release-ComObject"), code).strip()
+        self.assertEqual(sent, "a^^2 + b^^{2}")
+
+    def test_marks_count_only_the_exact_text_word_find_returned(self) -> None:
+        # Word Find (without MatchByte) also returns the full-width form; occurrence 1 of the half-width text is
+        # the second hit.
+        code = (
+            "function Fold([string]$s) { -join ($s.ToCharArray() | ForEach-Object {"
+            " if ($_ -ge [char]0xFF01 -and $_ -le [char]0xFF5E) { [char]([int]$_ - 0xFEE0) } else { $_ } }) }\n"
+            "class FakeDoc { [string]$Text; [object] Range([int]$s, [int]$e) { return [FakeRange]::new($this, $s, $e) } }\n"
+            "class FakeRange { [FakeDoc]$Doc; [int]$Start; [int]$End; [string]$Text; [object]$Find\n"
+            "  FakeRange([FakeDoc]$d, [int]$s, [int]$e) { $this.Doc = $d; $this.SetRange($s, $e); $this.Find = [FakeFind]::new($this) }\n"
+            "  [void] SetRange([int]$s, [int]$e) { $this.Start = $s; $this.End = $e; $this.Text = $this.Doc.Text.Substring($s, $e - $s) } }\n"
+            "class FakeFind { [FakeRange]$R; [string]$Text; [bool]$MatchCase; [bool]$MatchWholeWord; [bool]$MatchWildcards;"
+            " [bool]$Forward; [int]$Wrap; [bool]$Format\n"
+            "  FakeFind([FakeRange]$r) { $this.R = $r }\n"
+            "  [void] ClearFormatting() {}\n"
+            "  [bool] Execute() { $needle = Fold $this.Text.Replace('^^', '^')\n"
+            "    $at = (Fold $this.R.Doc.Text).Substring(0, $this.R.End).IndexOf($needle, $this.R.Start, [StringComparison]::Ordinal)\n"
+            "    if ($at -lt 0) { return $false }\n"
+            "    $this.R.SetRange($at, $at + $needle.Length); return $true } }\n"
+            "$script:Document = [FakeDoc]@{ Text = \"`u{5f0f}`u{ff08}1`u{ff09} `u{8207} `u{5f0f}(1)\" }\n"
+            "(Find-TextInRange -Start 0 -End $script:Document.Text.Length -Text \"`u{5f0f}(1)\" -Occurrence 1) -join ','\n"
+        )
+        self.assertEqual(self.run_functions(("Find-TextInRange", "Release-ComObject"), code).strip(), "7,11")
+
+    def test_paragraph_index_assigns_a_boundary_to_the_paragraph_it_starts(self) -> None:
+        # A display OMath or a leading superscript starts exactly where the previous paragraph ends.
+        code = ("$spans = @(foreach ($pair in @(@(0, 10), @(10, 25), @(25, 26))) "
+                "{ [pscustomobject]@{ start = $pair[0]; end = $pair[1] } })\n"
+                "(@(0, 9, 10, 24, 25, 26) | ForEach-Object { Find-ParagraphIndex -Spans $spans -Position $_ }) -join ','")
+        self.assertEqual(self.run_functions(("Find-ParagraphIndex",), code).strip(), "1,1,2,2,3,0")
 
     def test_a_briefly_held_clipboard_is_retried(self) -> None:
         # Fakes stand in for Word and PowerPoint: Paste fails twice, as while a clipboard manager holds the clipboard.
@@ -432,6 +508,39 @@ class BridgeHelperTests(unittest.TestCase):
         self.assertEqual(pastes, "3")  # the third transfer succeeded
         self.assertGreaterEqual(int(elapsed), 900)  # two waits, not a burst that a short hold outlasts
         self.assertIn("no Equation.DSMT4 object", message)  # failed past the clipboard, on the fake shapes
+
+
+@unittest.skipUnless(PWSH, "PowerShell 7 is unavailable")
+class MarksFileTests(unittest.TestCase):
+    def mark(self, marks: object) -> tuple[int, dict]:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "draft.docx"
+            source.write_bytes(b"never opened: every case fails before Word starts")
+            marks_path = Path(directory) / "marks.json"
+            marks_path.write_text(json.dumps(marks), encoding="utf-8")
+            return run_bridge("-Action", "mark", "-InputPath", str(source), "-OutputPath",
+                              str(Path(directory) / "marked.docx"), "-MarksPath", str(marks_path))
+
+    def test_malformed_marks_are_rejected_before_word_starts(self) -> None:
+        good = {"paragraph": 2, "text": "E = mc2", "marker": "{{MATH:energy}}"}
+        cases = {
+            "non-empty marks array": {"schema_version": 1, "marks": []},
+            "paragraph number from 1": {"schema_version": 1, "marks": [dict(good, paragraph=0)]},
+            "occurrence from 1": {"schema_version": 1, "marks": [dict(good, occurrence=0)]},
+            "within one paragraph": {"schema_version": 1, "marks": [dict(good, text="a\rb")]},
+            "{{MATH:id}} or {{EQREF:id}}": {"schema_version": 1, "marks": [dict(good, marker="MATH:energy")]},
+            "Duplicate marker": {"schema_version": 1, "marks": [good, dict(good, paragraph=3)]},
+            "shorter unique part": {"schema_version": 1, "marks": [dict(good, text="x" * 256)]},
+            "schema_version must be 1": {"marks": [good]},
+            "without paragraph marks, note references": {"schema_version": 1, "marks": [dict(good, text="E = mc2\f")]},
+            "objects or breaks": {"schema_version": 1, "marks": [dict(good, text="E\u0002 = mc2")]},
+            "each ^ counts twice": {"schema_version": 1, "marks": [dict(good, text="^" * 130 + "x")]},
+        }
+        for expected, marks in cases.items():
+            with self.subTest(expected=expected):
+                code, result = self.mark(marks)
+                self.assertEqual(code, 1)
+                self.assertIn(expected, result["error"])
 
 
 class Utf8TransportTests(unittest.TestCase):

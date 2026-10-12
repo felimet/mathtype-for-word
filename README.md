@@ -12,7 +12,7 @@ When an AI agent edits Word, PowerPoint, or MathType content, it must operate si
 
 - Creates genuine, editable `Equation.DSMT4` objects instead of Word OMath, images, or typed Unicode equations.
 - Supports inline and centered display equations in DOCX.
-- Classifies raw manuscript expressions as inline, unnumbered display, numbered display, or dynamic reference after scanning the complete document.
+- Classifies raw manuscript expressions as inline, unnumbered display, numbered display, or dynamic reference after scanning the complete document; a read-only scan finds plain-text mathematics (including Word sub/superscripts), and a mark step turns reviewed spans into markers.
 - Inserts Word equation numbers such as `(1)` and dynamic MathType references.
 - Creates centered floating MathType equations in PowerPoint through a hidden Word conversion document.
 - Preserves the source Office file and validates the generated output.

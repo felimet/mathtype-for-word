@@ -1,6 +1,8 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)][string]$OutputPath
+    [Parameter(Mandatory)][string]$OutputPath,
+    # A draft with plain-text mathematics and no markers, for scan and mark.
+    [switch]$PlainText
 )
 
 Set-StrictMode -Version Latest
@@ -14,6 +16,41 @@ try {
     $word.DisplayAlerts = 0
     $document = $word.Documents.Add()
     $selection = $word.Selection
+    if ($PlainText) {
+        # Word sub/superscripts that plain text loses: in the first two paragraphs, at the end of a table cell, and
+        # after the table. Literal carets test mark's escaping for Word Find.
+        $selection.TypeText('Plain-text drafts type formulas such as E = mc')
+        $selection.Font.Superscript = -1
+        $selection.TypeText('2')
+        $selection.Font.Superscript = 0
+        $selection.TypeText(' inside sentences.')
+        $selection.TypeParagraph()
+        $selection.TypeText('x = (' + [char]0x2212 + 'b ' + [char]0x00B1 + ' ' + [char]0x221A + '(b')
+        $selection.Font.Superscript = -1
+        $selection.TypeText('2')
+        $selection.Font.Superscript = 0
+        $selection.TypeText(' ' + [char]0x2212 + ' 4ac)) / 2a')
+        $selection.TypeParagraph()
+        $selection.TypeText('As shown in Eq. (1), the roots follow from the coefficients.')
+        $selection.TypeParagraph()
+        $selection.TypeText('Pythagoras: a^2 + b^2 = c^2')
+        $selection.TypeParagraph()
+        $selection.TypeText('Water is H')
+        $selection.Font.Subscript = -1
+        $selection.TypeText('2')
+        $selection.Font.Subscript = 0
+        $selection.TypeText('O.')
+        $selection.TypeParagraph()
+        $table = $document.Tables.Add($selection.Range, 1, 2)
+        $table.Cell(1, 1).Range.Text = [string][char]0x03B1 + ' + ' + [char]0x03B2
+        $cell = $table.Cell(1, 2).Range
+        $cell.Text = 'area m2'
+        $squared = $document.Range($cell.Start + 6, $cell.Start + 7) # the 2 of 'area m2'
+        $squared.Font.Superscript = -1
+        foreach ($value in @($squared, $cell, $table)) { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($value) }
+        $document.SaveAs2([IO.Path]::GetFullPath($OutputPath), 16)
+        return
+    }
     $paragraphs = @(
         'The mass-energy relation is:',
         '{{MATH:mass_energy}}',

@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)]
-    [ValidateSet('probe', 'probe-pptx', 'configure-defaults', 'check-manifest', 'render', 'validate', 'update', 'render-pptx', 'validate-pptx', 'cleanup')]
+    [ValidateSet('probe', 'probe-pptx', 'configure-defaults', 'check-manifest', 'scan', 'mark', 'render', 'validate', 'update', 'render-pptx', 'validate-pptx', 'cleanup')]
     [string]$Action,
 
     [string]$InputPath,
@@ -16,7 +16,9 @@ param(
     [string]$ValidationManifestPath,
     # Bookmark each numbered equation so a later session can reference it (every chunk of a batched render but
     # the last, which removes the bookmarks).
-    [switch]$AnchorNumbers
+    [switch]$AnchorNumbers,
+    # JSON list of exact text spans to replace with markers (mark).
+    [string]$MarksPath
 )
 
 Set-StrictMode -Version Latest
@@ -75,6 +77,19 @@ else { 15000 }
 $script:RunToken = if ($RunToken) { $RunToken.ToLowerInvariant() } else { [Guid]::NewGuid().ToString('N') }
 $script:StaleFileCutoffHours = 24
 $script:ClipboardAttempts = 3
+# Hints for plain-text mathematics in a draft; the agent decides what each paragraph really holds.
+$script:MathSignals = [regex]::new(@'
+(?<greek>[\u0391-\u03A9\u03B1-\u03C9\u03D1\u03D5\u03F5])
+|(?<operator>[=\u2212\u2248\u2260\u2261\u2264\u2265\u226A\u226B\u00B1\u2213\u00D7\u00F7\u221A\u221B\u2211\u220F\u222B\u222E\u2202\u221E\u2207\u2192\u2190\u2194\u21D2\u21D4\u2208\u2209\u2282\u2283\u2286\u2287\u222A\u2229\u2200\u2203\u221D\u22A5\u2225])
+|(?<script>[\u2070-\u209F\u00B2\u00B3\u00B9])
+|(?<tex>\\[A-Za-z]+|[A-Za-z0-9)\]}][_^]\{?[A-Za-z0-9])
+|(?<function>(?<![A-Za-z])(?:sin|cos|tan|cot|sec|csc|arcsin|arccos|arctan|sinh|cosh|tanh|log|ln|lg|exp|max|min|lim|det)\s*\()
+|(?<reference>(?:(?<![A-Za-z])(?:Eqs?\.|Equations?)|\u516C\u5F0F|\u5F0F)\s*[\uFF08(]\s*\d+(?:[.-]\d+)?\s*[)\uFF09]
+  |(?:\u7B2C\s*)?[\uFF08(]\s*\d+(?:[.-]\d+)?\s*[)\uFF09]\s*\u5F0F)
+'@, 'IgnorePatternWhitespace')
+$script:MarkerPattern = '^\{\{(?:MATH|EQREF):[^{}\r\n]+\}\}$'
+# Word's Find accepts at most 255 characters.
+$script:FindTextLimit = 255
 $script:ClipboardRetryMilliseconds = 500
 
 if (-not ('MathTypeOleData' -as [type])) {
@@ -1069,7 +1084,8 @@ function Insert-NativeReference {
 }
 
 function Save-DocumentAtomically {
-    param([Parameter(Mandatory)][string]$Destination, $Manifest)
+    # -Markers: a marked draft, checked for each marker exactly once instead of the render validation.
+    param([Parameter(Mandatory)][string]$Destination, $Manifest, [string[]]$Markers)
     $temporary = Get-OfficeTemporaryPath -Destination $Destination
     $null = Remove-OfficeTemporaryArtifacts -Destination $Destination
     try {
@@ -1079,8 +1095,11 @@ function Save-DocumentAtomically {
         Stop-Word
         try {
             Start-Word -ReadOnly -DocumentPath $temporary
-            $script:Document.Fields.Update() | Out-Null
-            $validation = Get-ValidationReport -DocumentPath $Destination -Manifest $Manifest
+            if ($Markers) { $validation = Get-MarkerReport -Markers $Markers }
+            else {
+                $script:Document.Fields.Update() | Out-Null
+                $validation = Get-ValidationReport -DocumentPath $Destination -Manifest $Manifest
+            }
         }
         finally { Stop-Word }
         if (-not $validation.ok) {
@@ -1512,6 +1531,302 @@ function Invoke-CheckManifest {
     })
 }
 
+function Get-ParagraphSpans {
+    # Start and end of every main-story paragraph (table cells included), in Word's own numbering from 1.
+    $spans = [System.Collections.Generic.List[object]]::new()
+    foreach ($paragraph in $script:Document.Paragraphs) {
+        $range = $paragraph.Range
+        $spans.Add([pscustomobject]@{ start = $range.Start; end = $range.End; range = $range })
+        Release-ComObject $paragraph
+    }
+    return , $spans
+}
+
+function Find-ParagraphIndex {
+    # Binary search: 1-based number of the paragraph that holds $Position, or 0.
+    param([Parameter(Mandatory)]$Spans, [Parameter(Mandatory)][int]$Position)
+    $low = 0
+    $high = $Spans.Count - 1
+    while ($low -le $high) {
+        $middle = [int][Math]::Floor(($low + $high) / 2)
+        if ($Position -lt $Spans[$middle].start) { $high = $middle - 1 }
+        elseif ($Position -ge $Spans[$middle].end) { $low = $middle + 1 }
+        else { return $middle + 1 }
+    }
+    return 0
+}
+
+function Get-ScriptRuns {
+    # Word subscript or superscript runs; plain text loses them (x2 typed with a superscript means x^2).
+    # One bounded Find per paragraph, without its paragraph or end-of-cell mark: across a cell mark Word's Find can
+    # return an earlier match, and a stall there must not end the scan of the rest of the document.
+    param(
+        [Parameter(Mandatory)][ValidateSet('subscript', 'superscript')][string]$Kind,
+        [Parameter(Mandatory)][AllowEmptyCollection()]$Spans,
+        [Parameter(Mandatory)][AllowEmptyCollection()][System.Collections.Generic.HashSet[int]]$Incomplete
+    )
+    $runs = [System.Collections.Generic.List[object]]::new()
+    for ($index = 1; $index -le $Spans.Count; $index++) {
+        $span = $Spans[$index - 1]
+        $limit = $span.end - 1
+        if ($limit -le $span.start) { continue }
+        $font = $span.range.Font
+        $flag = if ($Kind -eq 'subscript') { $font.Subscript } else { $font.Superscript }
+        Release-ComObject $font
+        if ($flag -eq 0) { continue } # 0 none, -1 the whole paragraph, 9999999 part of it
+        $range = $script:Document.Range($span.start, $limit)
+        $find = $range.Find
+        $find.ClearFormatting()
+        $find.Text = ''
+        $find.Format = $true
+        $find.Forward = $true
+        $find.Wrap = 0
+        if ($Kind -eq 'subscript') { $find.Font.Subscript = -1 } else { $find.Font.Superscript = -1 }
+        $last = -1
+        # A collapsed range would search on to the end of the document, so stop at the limit first.
+        while ($range.Start -lt $limit -and $find.Execute()) {
+            if ($range.Start -le $last -or $range.End -gt $limit -or $range.End -le $range.Start) {
+                [void]$Incomplete.Add($index)
+                break
+            }
+            $last = $range.Start
+            # Offset in the paragraph's text string (fields and shapes make Word positions differ from it).
+            $prefix = $script:Document.Range($span.start, $range.Start)
+            $runs.Add([pscustomobject]@{
+                paragraph = $index
+                kind = $Kind
+                text = [string]$range.Text
+                offset = ([string]$prefix.Text).Length
+                note_reference = ([int]$range.Footnotes.Count + [int]$range.Endnotes.Count) -gt 0
+            })
+            Release-ComObject $prefix
+            $range.SetRange($range.End, $limit)
+        }
+        Release-ComObject $find
+        Release-ComObject $range
+    }
+    return $runs.ToArray()
+}
+
+function Invoke-Scan {
+    if ([string]::IsNullOrWhiteSpace($InputPath)) { throw 'scan requires InputPath.' }
+    if ([string]::IsNullOrWhiteSpace($OutputPath)) { throw 'scan requires OutputPath (the candidates JSON).' }
+    $input = Resolve-ExistingFile -Path $InputPath -Label 'InputPath'
+    if ([IO.Path]::GetExtension($input) -ine '.docx') { throw 'InputPath must be a .docx file.' }
+    $output = Resolve-OutputFile -Path $OutputPath -Extension '.json'
+    try {
+        Start-Word -ReadOnly -DocumentPath $input
+        $spans = Get-ParagraphSpans
+        $found = @{}
+        $incomplete = [System.Collections.Generic.HashSet[int]]::new()
+        $runs = @(Get-ScriptRuns -Kind subscript -Spans $spans -Incomplete $incomplete) +
+            @(Get-ScriptRuns -Kind superscript -Spans $spans -Incomplete $incomplete)
+        foreach ($run in @($runs | Sort-Object paragraph, offset)) {
+            if (-not $found.ContainsKey($run.paragraph)) { $found[$run.paragraph] = [System.Collections.Generic.List[object]]::new() }
+            $found[$run.paragraph].Add([ordered]@{ kind = $run.kind; text = $run.text; offset = $run.offset; note_reference = $run.note_reference })
+        }
+        $equations = @{}
+        for ($index = 1; $index -le $script:Document.OMaths.Count; $index++) {
+            $omath = $script:Document.OMaths.Item($index)
+            $paragraph = Find-ParagraphIndex -Spans $spans -Position $omath.Range.Start
+            if (-not $equations.ContainsKey($paragraph)) { $equations[$paragraph] = [System.Collections.Generic.List[string]]::new() }
+            $equations[$paragraph].Add([string]$omath.Range.Text)
+            Release-ComObject $omath
+        }
+        $paragraphs = [System.Collections.Generic.List[object]]::new()
+        for ($index = 1; $index -le $spans.Count; $index++) {
+            $range = $spans[$index - 1].range
+            $text = ([string]$range.Text).TrimEnd("`r", "`a")
+            $signals = @(foreach ($match in $script:MathSignals.Matches($text)) {
+                    $kind = @('greek', 'operator', 'script', 'tex', 'function', 'reference') |
+                        Where-Object { $match.Groups[$_].Success } | Select-Object -First 1
+                    [ordered]@{ kind = $kind; text = $match.Value; offset = $match.Index }
+                })
+            # @() keeps one-element and empty lists as JSON arrays.
+            $formatted = @(if ($found.ContainsKey($index)) { $found[$index] })
+            $wordEquations = @(if ($equations.ContainsKey($index)) { $equations[$index] })
+            if ($signals.Count + $formatted.Count + $wordEquations.Count -eq 0 -and -not $incomplete.Contains($index)) { continue }
+            $paragraphs.Add([ordered]@{
+                paragraph = $index
+                in_table = [bool]$range.Information($script:WdWithInTable)
+                text = $text
+                signals = $signals
+                formatted = $formatted
+                word_equations = $wordEquations
+            })
+        }
+        $plainText = $script:Document.Content.Text
+        $mathTypeObjects = 0
+        for ($index = 1; $index -le $script:Document.InlineShapes.Count; $index++) {
+            $shape = $script:Document.InlineShapes.Item($index)
+            try { if ($shape.OLEFormat.ProgID -eq 'Equation.DSMT4') { $mathTypeObjects++ } } catch {}
+            Release-ComObject $shape
+        }
+        $candidates = [ordered]@{
+            schema = 'mathtype-for-word-scan/1'
+            document_path = $input
+            paragraphs_total = $spans.Count
+            existing_markers = [regex]::Matches($plainText, '\{\{(?:MATH|EQREF):').Count
+            existing_mathtype_objects = $mathTypeObjects
+            word_equations = $script:Document.OMaths.Count
+            # Paragraphs whose sub/superscripts Word's Find could not list completely; read them in Word.
+            formatted_incomplete = @($incomplete | Sort-Object)
+            paragraphs = @($paragraphs)
+        }
+        foreach ($span in $spans) { Release-ComObject $span.range }
+    }
+    finally { Stop-Word }
+    $temporary = "$output.$($script:RunToken).tmp"
+    [IO.File]::WriteAllText($temporary, ($candidates | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
+    Move-Item -LiteralPath $temporary -Destination $output -Force
+    Write-JsonResult ([ordered]@{
+        ok = $true
+        action = 'scan'
+        input_path = $input
+        candidates_path = $output
+        paragraphs_with_candidates = $paragraphs.Count
+        word_equations = $candidates.word_equations
+        existing_markers = $candidates.existing_markers
+        existing_mathtype_objects = $mathTypeObjects
+    })
+}
+
+function Read-Marks {
+    param([Parameter(Mandatory)][string]$Path)
+    $resolved = Resolve-ExistingFile -Path $Path -Label 'MarksPath'
+    $document = Get-Content -Raw -LiteralPath $resolved | ConvertFrom-Json -NoEnumerate
+    if ($document -isnot [System.Management.Automation.PSCustomObject]) { throw 'Marks file must be a JSON object.' }
+    Add-MissingProperties -InputObject $document -Defaults @{ schema_version = $null; marks = $null }
+    if ($document.schema_version -ne 1) { throw 'Marks file schema_version must be 1.' }
+    if ($document.marks -isnot [array] -or $document.marks.Count -eq 0) { throw 'Marks file must contain a non-empty marks array.' }
+    $markers = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($mark in $document.marks) {
+        if ($mark -isnot [System.Management.Automation.PSCustomObject]) { throw 'Every mark must be a JSON object.' }
+        Add-MissingProperties -InputObject $mark -Defaults @{ paragraph = $null; text = $null; occurrence = 1; marker = $null }
+        $label = "Mark '$($mark.marker)'"
+        if (-not ($mark.paragraph -is [long] -or $mark.paragraph -is [int]) -or $mark.paragraph -lt 1) { throw "$label requires a paragraph number from 1." }
+        if (-not ($mark.occurrence -is [long] -or $mark.occurrence -is [int]) -or $mark.occurrence -lt 1) { throw "$label requires an occurrence from 1." }
+        # Tab and manual line break (\v) may go; paragraph marks, note references (\u0002), objects (\u0001) and page,
+        # column or section breaks are document structure that a replacement would delete with the formula.
+        if ($mark.text -isnot [string] -or $mark.text.Length -eq 0 -or $mark.text -match '[\x00-\x08\x0A\x0C-\x1F]') {
+            throw "$label requires plain text within one paragraph, without paragraph marks, note references, objects or breaks."
+        }
+        if ($mark.text.Replace('^', '^^').Length -gt $script:FindTextLimit) {
+            throw "$label text is longer than $($script:FindTextLimit) characters (each ^ counts twice); mark a shorter unique part."
+        }
+        if ($mark.marker -isnot [string] -or $mark.marker -notmatch $script:MarkerPattern) {
+            throw "Every marker must read {{MATH:id}} or {{EQREF:id}}: $($mark.marker)"
+        }
+        if (-not $markers.Add($mark.marker)) { throw "Duplicate marker: $($mark.marker)" }
+    }
+    return @($document.marks)
+}
+
+function Find-TextInRange {
+    # The start and end of the given exact occurrence of $Text between $Start and $End, or $null.
+    param([int]$Start, [int]$End, [string]$Text, [int]$Occurrence)
+    $range = $script:Document.Range($Start, $End)
+    $find = $range.Find
+    $find.ClearFormatting()
+    $find.Text = $Text.Replace('^', '^^') # ^ starts a special character even without wildcards
+    $find.MatchCase = $true
+    $find.MatchWholeWord = $false
+    $find.MatchWildcards = $false
+    $find.Forward = $true
+    $find.Wrap = 0
+    $find.Format = $false
+    $count = 0
+    $last = -1
+    try {
+        while ($find.Execute() -and $range.Start -gt $last -and $range.End -le $End) {
+            $last = $range.Start
+            # Find also matches other widths and case forms of some characters; count exact text only.
+            if ([string]$range.Text -ceq $Text) {
+                $count++
+                if ($count -eq $Occurrence) { return @($range.Start, $range.End) }
+            }
+            $range.SetRange($range.End, $End)
+        }
+        return $null
+    }
+    finally {
+        Release-ComObject $find
+        Release-ComObject $range
+    }
+}
+
+function Get-MarkerReport {
+    param([Parameter(Mandatory)][string[]]$Markers)
+    $plainText = $script:Document.Content.Text
+    $errors = [System.Collections.Generic.List[string]]::new()
+    foreach ($marker in $Markers) {
+        $count = [regex]::Matches($plainText, [regex]::Escape($marker)).Count
+        if ($count -ne 1) { $errors.Add("Marker $marker occurs $count times.") }
+    }
+    return [ordered]@{ ok = $errors.Count -eq 0; markers = $Markers.Count; errors = @($errors) }
+}
+
+function Invoke-Mark {
+    if ([string]::IsNullOrWhiteSpace($InputPath)) { throw 'mark requires InputPath.' }
+    if ([string]::IsNullOrWhiteSpace($OutputPath)) { throw 'mark requires OutputPath.' }
+    if ([string]::IsNullOrWhiteSpace($MarksPath)) { throw 'mark requires MarksPath.' }
+    $input = Resolve-ExistingFile -Path $InputPath -Label 'InputPath'
+    if ([IO.Path]::GetExtension($input) -ine '.docx') { throw 'InputPath must be a .docx file.' }
+    $output = Resolve-OutputFile -Path $OutputPath
+    if ([string]::Equals($output, $input, [StringComparison]::OrdinalIgnoreCase)) { throw 'mark writes a new DOCX; OutputPath must differ from InputPath.' }
+    $marks = Read-Marks -Path $MarksPath
+    try {
+        # Read-only: the source is never saved, and a copy the user has open in Word does not block this.
+        Start-Word -ReadOnly -DocumentPath $input
+        $plainText = $script:Document.Content.Text
+        foreach ($mark in $marks) {
+            if ($plainText.Contains([string]$mark.marker)) { throw "The document already contains $($mark.marker)." }
+        }
+        $spans = Get-ParagraphSpans
+        # Locate every span before changing anything, so positions refer to the unedited document.
+        $targets = foreach ($mark in $marks) {
+            if ($mark.paragraph -gt $spans.Count) { throw "Paragraph $($mark.paragraph) does not exist; the document has $($spans.Count)." }
+            $span = $spans[[int]$mark.paragraph - 1]
+            $position = Find-TextInRange -Start $span.start -End $span.end -Text $mark.text -Occurrence ([int]$mark.occurrence)
+            if ($null -eq $position) {
+                throw "Paragraph $($mark.paragraph) has no occurrence $($mark.occurrence) of '$($mark.text)'."
+            }
+            $probe = $script:Document.Range($position[0], $position[1])
+            try { $embedded = [int]$probe.OMaths.Count + [int]$probe.Fields.Count + [int]$probe.InlineShapes.Count }
+            finally { Release-ComObject $probe }
+            if ($embedded -gt 0) {
+                throw "Mark $($mark.marker) covers a Word equation, field or object; mark plain text only."
+            }
+            [pscustomobject]@{ start = $position[0]; end = $position[1]; marker = [string]$mark.marker }
+        }
+        foreach ($span in $spans) { Release-ComObject $span.range }
+        $ordered = @($targets | Sort-Object start)
+        for ($index = 1; $index -lt $ordered.Count; $index++) {
+            if ($ordered[$index].start -lt $ordered[$index - 1].end) {
+                throw "Marks $($ordered[$index - 1].marker) and $($ordered[$index].marker) overlap."
+            }
+        }
+        # Last first: replacing a span never moves one that is still to be replaced.
+        foreach ($target in @($ordered | Sort-Object start -Descending)) {
+            $range = $script:Document.Range($target.start, $target.end)
+            $range.Text = $target.marker
+            $range.Font.Subscript = 0
+            $range.Font.Superscript = 0
+            Release-ComObject $range
+        }
+        $validation = Save-DocumentAtomically -Destination $output -Markers @($marks | ForEach-Object { [string]$_.marker })
+    }
+    finally { Stop-Word }
+    Write-JsonResult ([ordered]@{
+        ok = $true
+        action = 'mark'
+        input_path = $input
+        output_path = $output
+        marks = $marks.Count
+        validation = $validation
+    })
+}
+
 function Invoke-Render {
     if ([string]::IsNullOrWhiteSpace($InputPath)) { throw 'render requires InputPath.' }
     if ([string]::IsNullOrWhiteSpace($OutputPath)) { throw 'render requires OutputPath.' }
@@ -1753,6 +2068,8 @@ try {
         'probe-pptx' { Invoke-Probe -PowerPointRequired }
         'configure-defaults' { Invoke-ConfigureDefaults }
         'check-manifest' { Invoke-CheckManifest }
+        'scan' { Invoke-Scan }
+        'mark' { Invoke-Mark }
         'render' { Invoke-Render }
         'validate' { Invoke-Validate }
         'update' { Invoke-Update }
