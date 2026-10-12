@@ -290,6 +290,8 @@ class StaticContractTests(unittest.TestCase):
         self.assertIn(f"version: {expected}", skill)
         self.assertIn(f"author: {expected_author}", skill)
         self.assertIn(f'SERVER_VERSION = "{expected}"', server)
+        changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+        self.assertRegex(changelog, rf"(?m)^## \[{re.escape(expected)}\] - \d{{4}}-\d{{2}}-\d{{2}}$")
         for path in (ROOT / "LICENSE", ROOT / "skills" / "mathtype-for-word" / "LICENSE.txt"):
             self.assertIn(expected_author, path.read_text(encoding="utf-8"))
 

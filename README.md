@@ -181,6 +181,7 @@ Large Word documents render in resumable batches of fresh Word sessions (`batch_
 | `config/defaults.json` | Default Word equation-number profile |
 | `evals/fixtures/` | Real Chinese and English DOCX/PPTX evaluation inputs |
 | `tests/` | Static, MCP, live Office, rendering, and packaging checks |
+| `CHANGELOG.md` | Changes in each release |
 
 ## Packaging
 

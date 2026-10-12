@@ -181,6 +181,7 @@ Bridge 會保留來源檔，先驗證同層暫存 Office 檔，再以原子方�
 | `config/defaults.json` | Word 公式編號預設設定 |
 | `evals/fixtures/` | 真實繁中、英文 DOCX/PPTX 評測輸入 |
 | `tests/` | 靜態、MCP、Office 整合、視覺與封裝測試 |
+| `CHANGELOG.md` | 各版本變更紀錄 |
 
 ## 封裝
 
