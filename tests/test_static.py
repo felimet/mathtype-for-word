@@ -275,6 +275,30 @@ class StaticContractTests(unittest.TestCase):
         self.assertIn("Quick AI-agent test prompt", readme)
         self.assertIn("AI Agent 簡易測試 Prompt", readme_zh)
 
+    def test_packages_in_dist_carry_the_current_runtime_files(self) -> None:
+        # A package built before the last change ships stale code, as the 1.3.0 packages did.
+        def runtime_files(folder: Path) -> list[Path]:
+            return [path for path in folder.rglob("*")
+                    if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc"]
+
+        def same(packaged: bytes, source: Path) -> bool:
+            return packaged.replace(b"\r\n", b"\n") == source.read_bytes().replace(b"\r\n", b"\n")
+
+        plugin_files = [ROOT / ".mcp.json", ROOT / ".codex-mcp.json", ROOT / ".claude-plugin" / "plugin.json",
+                        ROOT / ".codex-plugin" / "plugin.json", *runtime_files(ROOT / "scripts"),
+                        *runtime_files(ROOT / "skills")]
+        with zipfile.ZipFile(ROOT / "dist" / "mathtype-for-word-plugin.zip") as plugin:
+            for path in plugin_files:
+                name = path.relative_to(ROOT).as_posix()
+                with self.subTest(package="plugin", file=name):
+                    self.assertTrue(same(plugin.read(f"mathtype-for-word/{name}"), path))
+        skill_root = ROOT / "skills" / "mathtype-for-word"
+        with zipfile.ZipFile(ROOT / "dist" / "mathtype-for-word.skill") as skill:
+            for path in runtime_files(skill_root):
+                name = path.relative_to(skill_root).as_posix()
+                with self.subTest(package="skill", file=name):
+                    self.assertTrue(same(skill.read(f"mathtype-for-word/{name}"), path))
+
     def test_release_versions_are_aligned(self) -> None:
         expected = "1.4.0"
         expected_author = "Jia-Ming Zhou (Felimet)"
