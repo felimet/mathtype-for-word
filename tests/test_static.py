@@ -252,7 +252,7 @@ class StaticContractTests(unittest.TestCase):
         self.assertIn("AI Agent 簡易測試 Prompt", readme_zh)
 
     def test_release_versions_are_aligned(self) -> None:
-        expected = "1.3.0"
+        expected = "1.4.0"
         expected_author = "Jia-Ming Zhou (Felimet)"
         for path in (
             ROOT / ".claude-plugin" / "plugin.json",
