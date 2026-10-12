@@ -21,6 +21,25 @@
       "tex": "x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}",
       "layout": "display",
       "numbered": true
+    },
+    {
+      "id": "energy_flux",
+      "marker": "{{MATH:energy_flux}}",
+      "tex": "q = -k \\nabla T",
+      "layout": "display",
+      "numbered": true
+    },
+    {
+      "id": "clipped_fraction",
+      "marker": "{{MATH:clipped_fraction}}",
+      "tex": "\\frac{\\partial^2 u}{\\partial x^2}",
+      "layout": "inline"
+    },
+    {
+      "id": "table_cell",
+      "marker": "{{MATH:table_cell}}",
+      "tex": "\\frac{a}{b}",
+      "layout": "inline"
     }
   ],
   "references": [

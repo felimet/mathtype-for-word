@@ -82,6 +82,30 @@ class StaticContractTests(unittest.TestCase):
         self.assertIn("PLUGIN_ROOT", claude)
         self.assertIn("${PLUGIN_ROOT}", codex)
 
+    def test_server_starts_without_powershell_7_and_bridge_requires_it(self) -> None:
+        # The server starts without PowerShell 7 and can install it: the plugin launches it through Windows
+        # PowerShell 5.1, which ships with Windows, inline because an execution policy can refuse script files.
+        for name, command in ((".mcp.json", "powershell.exe"), (".codex-mcp.json", "python")):
+            server = json.loads((ROOT / name).read_text(encoding="utf-8"))["mcpServers"]["mathtype-for-word"]
+            self.assertEqual(server["command"], command, name)
+            self.assertNotIn("-File", server["args"], name)
+        bridge = (ROOT / "scripts" / "mathtype-word.ps1").read_text(encoding="utf-8")
+        self.assertTrue(bridge.startswith("#Requires -Version 7.0\n"))
+        windows_powershell = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+        if not windows_powershell.is_file():
+            self.skipTest("Windows PowerShell 5.1 is not available")
+        scripts = [ROOT / "scripts" / "run-mcp.ps1", ROOT / "scripts" / "ensure-pwsh.ps1",
+                   ROOT / "skills" / "mathtype-for-word" / "scripts" / "invoke-bridge.ps1"]
+        check = "; ".join(
+            f"$e = $null; $null = [Management.Automation.Language.Parser]::ParseFile('{path}', [ref]$null, [ref]$e); "
+            f"if ($e.Count) {{ '{path.name}: ' + ($e.Message -join ' | ') }}"
+            for path in scripts
+        )
+        completed = subprocess.run([str(windows_powershell), "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", check],
+                                   capture_output=True, text=True, timeout=60)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(completed.stdout.strip(), "")
+
     def test_no_todo_placeholders(self) -> None:
         excluded = {"README.md"}
         findings: list[str] = []
@@ -251,8 +275,32 @@ class StaticContractTests(unittest.TestCase):
         self.assertIn("Quick AI-agent test prompt", readme)
         self.assertIn("AI Agent 簡易測試 Prompt", readme_zh)
 
+    def test_packages_in_dist_carry_the_current_runtime_files(self) -> None:
+        # A package built before the last change ships stale code, as the 1.3.0 packages did.
+        def runtime_files(folder: Path) -> list[Path]:
+            return [path for path in folder.rglob("*")
+                    if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc"]
+
+        def same(packaged: bytes, source: Path) -> bool:
+            return packaged.replace(b"\r\n", b"\n") == source.read_bytes().replace(b"\r\n", b"\n")
+
+        plugin_files = [ROOT / ".mcp.json", ROOT / ".codex-mcp.json", ROOT / ".claude-plugin" / "plugin.json",
+                        ROOT / ".codex-plugin" / "plugin.json", *runtime_files(ROOT / "scripts"),
+                        *runtime_files(ROOT / "skills")]
+        with zipfile.ZipFile(ROOT / "dist" / "mathtype-for-word-plugin.zip") as plugin:
+            for path in plugin_files:
+                name = path.relative_to(ROOT).as_posix()
+                with self.subTest(package="plugin", file=name):
+                    self.assertTrue(same(plugin.read(f"mathtype-for-word/{name}"), path))
+        skill_root = ROOT / "skills" / "mathtype-for-word"
+        with zipfile.ZipFile(ROOT / "dist" / "mathtype-for-word.skill") as skill:
+            for path in runtime_files(skill_root):
+                name = path.relative_to(skill_root).as_posix()
+                with self.subTest(package="skill", file=name):
+                    self.assertTrue(same(skill.read(f"mathtype-for-word/{name}"), path))
+
     def test_release_versions_are_aligned(self) -> None:
-        expected = "1.3.0"
+        expected = "1.4.0"
         expected_author = "Jia-Ming Zhou (Felimet)"
         for path in (
             ROOT / ".claude-plugin" / "plugin.json",
@@ -266,6 +314,8 @@ class StaticContractTests(unittest.TestCase):
         self.assertIn(f"version: {expected}", skill)
         self.assertIn(f"author: {expected_author}", skill)
         self.assertIn(f'SERVER_VERSION = "{expected}"', server)
+        changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+        self.assertRegex(changelog, rf"(?m)^## \[{re.escape(expected)}\] - \d{{4}}-\d{{2}}-\d{{2}}$")
         for path in (ROOT / "LICENSE", ROOT / "skills" / "mathtype-for-word" / "LICENSE.txt"):
             self.assertIn(expected_author, path.read_text(encoding="utf-8"))
 
@@ -331,6 +381,52 @@ class StaticContractTests(unittest.TestCase):
         self.assertIn("Remove-OfficeTemporaryArtifacts -Destination $Destination -IncludeCurrentRun", bridge)
         self.assertIn('"-RunToken"', server)
         self.assertIn('"temporary_file_cleanup": cleanup', server)
+
+    def test_office_safety_contract(self) -> None:
+        bridge = (ROOT / "scripts" / "mathtype-word.ps1").read_text(encoding="utf-8")
+        server = (ROOT / "scripts" / "mcp_server.py").read_text(encoding="utf-8")
+        # MathType ignores REG_DWORD warning preferences, and its dialog then blocks hidden Word.
+        for text in (bridge, server):
+            self.assertIn("NoSlowUpdateEqnDlg", text)
+        self.assertNotIn("-PropertyType DWord", bridge)
+        self.assertNotIn("Set-ItemProperty", bridge)  # keeps an existing value's DWORD kind
+        self.assertNotIn("winreg.REG_DWORD", server)
+        self.assertIn("-PropertyType String", bridge)
+        # UTF-8 only on a redirected stderr: setting the console code page leaks into the caller's shared console.
+        self.assertIn("[Console]::IsErrorRedirected", bridge)
+        self.assertIn("[Console]::SetError(", bridge)
+        self.assertNotIn("[Console]::OutputEncoding =", bridge)
+        # PowerPoint is single-instance: reopen for validation in the same instance, never quit the user's.
+        save_pptx = bridge[bridge.index("function Save-PresentationAtomically"):bridge.index("function Invoke-RenderPptx")]
+        self.assertNotIn("Stop-PowerPoint", save_pptx)
+        self.assertIn("$script:PowerPointOwned -and $userPresentations -eq 0", bridge)
+        start_pptx = bridge[bridge.index("function Start-PowerPoint"):bridge.index("function Stop-Word")]
+        self.assertLess(start_pptx.index(".FullName"), start_pptx.index("Presentations.Open"))
+        self.assertIn('throw "The presentation is already open in PowerPoint', start_pptx)
+        self.assertIn("'^https?://'", start_pptx)  # OneDrive/SharePoint files report a URL FullName
+        # Without leaving the document grid, an at-least line still snaps to the grid pitch.
+        repair = bridge[bridge.index("function Repair-ClippedLineSpacing"):bridge.index("function Convert-Equation")]
+        self.assertIn("DisableLineHeightGrid = -1", repair)
+        self.assertIn("$cell.HeightRule = $script:WdRowHeightAtLeast", repair)  # Rows.Item fails on merged cells
+        # A hidden instance hung on a MathType dialog shows the dialog but no main frame; that one must be ended.
+        orphan = bridge[bridge.index("function Stop-OrphanedOffice"):bridge.index("function Write-JsonResult")]
+        self.assertIn("[OfficeDesktop]::HasVisibleFrame(", orphan)
+        for text in (bridge, server):  # a slide show the user started in the instance shows only screenClass
+            self.assertIn('"screenClass"', text)
+        self.assertNotIn("MainWindowHandle", bridge)
+        slide = bridge[bridge.index("function Add-MathTypeEquationToSlide"):bridge.index("function Save-PresentationAtomically")]
+        self.assertIn("[OfficeDesktop]::DescribeClipboardBlocker()", slide)
+        # The last session of a batched render leaves no helper bookmarks behind.
+        render = bridge[bridge.index("function Invoke-Render"):bridge.index("function Get-ValidationReport")]
+        self.assertIn("if (-not $AnchorNumbers) { Remove-Anchors }", render)
+        self.assertIn("ConvertTo-Json -Depth 20 -Compress -EscapeHandling EscapeNonAscii", bridge)
+        # The journal is written before the first temporary value and restored under the lock.
+        set_temporary = bridge[bridge.index("function Set-TemporaryMathTypePreferences"):bridge.index("function Restore-MathTypePreferences")]
+        self.assertLess(set_temporary.index("WarningJournalPath"), set_temporary.index("Set-WarningPreference -Name $name -Value '1'"))
+        self.assertIn("Restore-JournaledPreferences", bridge[bridge.index("function Enter-BridgeLock"):bridge.index("function Exit-BridgeLock")])
+        # The WORD_PID line must precede Documents.Open, where hangs happen.
+        start_word = bridge[bridge.index("function Start-Word"):bridge.index("function Connect-PowerPoint")]
+        self.assertLess(start_word.index("WORD_PID="), start_word.index("Documents.Open"))
 
 
 if __name__ == "__main__":

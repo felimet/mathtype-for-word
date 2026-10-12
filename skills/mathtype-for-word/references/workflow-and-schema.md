@@ -3,10 +3,11 @@
 ## Contents
 
 1. End-to-end flow
-2. Schema v1
-3. Complete example
-4. Marker preparation
-5. Output contract
+2. Large documents
+3. Schema v1
+4. Complete example
+5. Marker preparation
+6. Output contract
 
 ## End-to-end flow
 
@@ -15,14 +16,30 @@ The bridge performs a deterministic transaction:
 1. Open the input DOCX in an isolated hidden Word instance.
 2. Require every marker to occur exactly once.
 3. Replace equation markers with TeX delimited for MathType Toggle TeX.
-4. Require exactly one new `Equation.DSMT4` object per equation.
+4. Require exactly one new `Equation.DSMT4` object per equation. When the paragraph has exact line spacing lower than the new object, switch it to at-least spacing with the same value and stop it snapping to the document line grid, which exact spacing ignored. A table row with an exact height that receives an equation becomes an at-least row of the same height, which looks the same while its content fits (`exact_line_spacing`).
 5. For numbered displays, call MathType's native number command and normalize its native fields to `(n)`.
 6. Replace reference markers through MathType's `MTReference` and `MTPlaceRef` workflow.
 7. Update Word fields.
-8. Save to a temporary sibling file and atomically move it to the output path.
-9. Reopen read-only and validate.
+8. Save to a temporary sibling file, reopen it read-only, and validate it.
+9. Move it atomically to the output path only when validation passes.
 
-The bridge refuses an existing output unless `overwrite` is explicitly true.
+The bridge refuses an existing output unless `overwrite` is explicitly true. A render job refuses to start while another render job is active; poll `get_mathtype_render_status` for that job. Each editing bridge call (a Word render chunk, `render-pptx`, `configure-defaults`) holds a per-Windows-session lock (`Local\` namespace) and waits up to 30 seconds (`MATHTYPE_BRIDGE_LOCK_WAIT_SECONDS`) for it; `update` only refreshes Word fields and does not take the lock.
+
+## Large documents
+
+One hidden Word session fails with RPC errors after a few hundred conversions, so `render_mathtype_word_document` renders a manifest with more than `batch_size` equations plus references (default 40; `0` disables batching) as a job:
+
+1. All equations, then all references, render in chunks of `batch_size` operations, each in a fresh Word session that writes a checkpoint DOCX and is validated as a partial manifest.
+2. MathType places a reference by clicking the live number field of its target. Every chunk but the last therefore marks each numbered equation's paragraph with a hidden bookmark (`_MTEq…`), and a reference rendered in a later session reaches its target through it.
+3. The last chunk removes those bookmarks, writes the real output, and validates it strictly against the whole manifest before publishing it.
+4. A chunk that fails because its Word session broke down (RPC error, crash, a first timeout) is retried split in half; a second timeout in a row stops the job. Any other failure stops the job and names its cause.
+5. Calling render again with the same input, output, and manifest resumes after the last committed chunk. A changed input or manifest starts over.
+
+The render result lists every equation whose paragraph line spacing or table row height changed (`line_spacing_changed_for`, `row_height_changed_for`, across all chunks) and every watchdog timeout with its process cleanup (`timeouts`).
+
+Pass `background: true` when the job may outlast the client's tool-call time limit, then poll `get_mathtype_render_status` with the same output path. Job state, checkpoints, and the log live in `%APPDATA%\MathTypeForWordAgent\jobs`, never beside the user's files. `cleanup: true` removes them once the job is completed, failed, or interrupted; do not clean a failed or interrupted job you intend to resume, because its next render starts from the first chunk.
+
+A partial manifest (`partial_manifest: true`) covers only part of the document: markers outside it remain as warnings and native number/reference counts are lower bounds. Its own markers must still resolve.
 
 ## Schema v1
 
@@ -50,8 +67,10 @@ The bridge refuses an existing output unless `overwrite` is explicitly true.
 Rules:
 
 - `schema_version` must equal `1`.
-- `equations` is required. `references` may be empty.
-- `id` values are unique and case-sensitive.
+- `equations` is required. `references` may be empty or omitted.
+- `numbered` defaults to `false` when omitted.
+- Optional top-level `exact_line_spacing`: `"at_least"` (default) or `"keep"`. With `"keep"`, an equation taller than its paragraph's exact line spacing or its table row's exact height stays clipped and validation reports a warning.
+- `id` values are unique, case-sensitive JSON strings; a reference `target` is the same string.
 - All equation and reference markers are unique across the manifest.
 - A marker occurs exactly once in the DOCX.
 - `tex` is non-empty and contains no newline.
@@ -118,6 +137,25 @@ Expected output structure:
 ## Marker preparation
 
 Prefer markers that are visually obvious, unique, and absent from normal prose. Put a display marker alone in its paragraph. An inline marker remains inside the sentence.
+
+A draft with plain-text mathematics needs markers before rendering. `scan_mathtype_candidates` (bridge action `scan`) opens the draft read-only and writes a candidates JSON. It lists every paragraph with math signals: Greek letters, operators, Unicode or Word sub/superscripts, TeX-like text, function calls, typed references such as `Eq. (2)`, `式（2）` or `(2)式`, and Word built-in equations. Each entry gives Word's paragraph number (table cells included), the exact paragraph text, and those signals. The signals are hints; decide each span yourself, and use the `formatted` runs to restore scripts in TeX (`x2` with a superscript `2` is `x^2`). Each run gives `kind`, `text`, and `offset`, its start index in the paragraph's `text`, in document order; match runs to the text by `offset`. `formatted_incomplete` lists paragraphs whose sub/superscripts Word could not list completely; read those in Word before writing their TeX.
+
+Then write a marks file and call `mark_mathtype_document` (bridge action `mark`):
+
+```json
+{
+  "schema_version": 1,
+  "marks": [
+    {"paragraph": 12, "text": "E = mc2", "marker": "{{MATH:mass_energy}}"},
+    {"paragraph": 15, "text": "(1)", "occurrence": 1, "marker": "{{EQREF:mass_energy}}"}
+  ]
+}
+```
+
+- `text` is an exact span of that paragraph's text, at most 255 characters with each `^` counted twice; `occurrence` (default 1) picks among repeats within the paragraph. Keep paragraph marks, note references (`\u0002`), objects (`\u0001`) and page, column or section breaks (`\f`, `\u000e`) out of the span; mark rejects them and spans that cover Word equations or fields.
+- For a reference, mark only the parenthesized number, such as `(1)` or `（1）`. A `reference` signal such as `Eq. (2)` only locates it: `Eq.`, `Equation`, and `式` are prose and stay outside the marker, because MathType renders the reference as `(n)` alone.
+- The source is opened read-only and never replaced (`output_path` must differ). Every span is located before any change, overlapping spans are rejected, and the marked copy is saved only when each marker occurs exactly once.
+- A display equation's marker must end up alone in its paragraph, and mark cannot create a paragraph break. Mark the whole paragraph text only when the paragraph holds nothing but the formula. When the formula shares its paragraph with prose (lines joined by Shift+Enter, `\u000b` in the scan text, included), ask the user to give it its own paragraph, or keep the inline layout if the user agrees, then scan again, because paragraph numbers change.
 
 Good:
 

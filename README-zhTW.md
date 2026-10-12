@@ -12,7 +12,7 @@ AI Agent 編輯 Word、PowerPoint 或 MathType 內容時，必須在背景靜默
 
 - 建立真正可編輯的 `Equation.DSMT4` 物件，不以 Word OMath、圖片或手打 Unicode 公式代替。
 - 支援 DOCX 行內公式與置中的獨立公式。
-- 掃描完整文章後，自動將原稿中的數學內容分類為行內公式、未編號獨立公式、編號獨立公式或動態引用。
+- 掃描完整文章後，自動將原稿中的數學內容分類為行內公式、未編號獨立公式、編號獨立公式或動態引用；唯讀掃描可找出純文字數學（含 Word 上下標格式），標記步驟再把審閱後的片段換成標記。
 - 插入 `(1)` 等 Word MathType 原生編號及動態引用。
 - 透過隱藏的 Word 轉換文件，在 PowerPoint 建立置中的浮動 MathType 公式。
 - 保留來源 Office 檔案並驗證輸出成品。
@@ -23,7 +23,7 @@ AI Agent 編輯 Word、PowerPoint 或 MathType 內容時，必須在背景靜默
 - Windows 10 或 11。
 - 支援 COM automation 的 Microsoft Word 與 PowerPoint 桌面版。
 - `PATH` 中可使用 Python 3。
-- 可使用 `pwsh.exe` 的 PowerShell 7 以上版本。
+- 可使用 `pwsh.exe` 的 PowerShell 7 以上版本。若尚未安裝，plugin 會為目前使用者安裝 PowerShell 7.6 LTS 並告知，參閱 [PowerShell 7](#powershell-7)。
 - 從 [MathType 下載頁面](https://mathtype.tw/download/)安裝桌面版 **MathType for Windows**。
 
 本專案以 **MathType-win-zh-7.11.1.462** 開發與驗證，其 `ProductVersion` 為 `7.11.1.462`。請安裝 **MathType for Windows**，不可只安裝 **MathType Add-In for Microsoft 365**。Microsoft 365 工作窗格外掛不具備本工具使用的桌面 OLE、Word template、PowerPoint add-in 與 COM 工作流。
@@ -41,7 +41,7 @@ Office bridge 是 Windows PowerShell 7 腳本。外層終端機可使用 PowerSh
 | WSL Bash | 呼叫 Windows `pwsh.exe`；Linux `pwsh` 無法執行 Windows Office COM automation。 |
 | CMD | 以相同參數呼叫 `pwsh.exe`。 |
 | Windows PowerShell 5.1 | 不可直接執行 bridge；切換至 Git Bash 或 CMD，再呼叫 `pwsh.exe`。 |
-| 沒有支援的終端機或找不到 `pwsh.exe` | 停止執行並提示使用者安裝 PowerShell 7，參閱 [Microsoft PowerShell 更新常見問題](https://learn.microsoft.com/zh-tw/powershell/scripting/install/microsoft-update-faq?view=powershell-7.6)。 |
+| 找不到 `pwsh.exe` | 由 MCP server 自動安裝 PowerShell 7，或依下方說明執行 `scripts/ensure-pwsh.ps1`。 |
 
 以下命令可在 PowerShell 7、Git Bash 與 CMD 執行：
 
@@ -49,12 +49,28 @@ Office bridge 是 Windows PowerShell 7 腳本。外層終端機可使用 PowerSh
 pwsh.exe -NoProfile -ExecutionPolicy Bypass -File scripts/mathtype-word.ps1 -Action probe
 ```
 
+### PowerShell 7
+
+MCP server 是 Python 程式，啟動時不需要 PowerShell 7：plugin 的啟動命令在每台受支援 Windows 皆內建的 Windows PowerShell 5.1（`powershell.exe`）下執行，上方的手動註冊則直接啟動 `python`。bridge 在 PowerShell 7 中執行。系統沒有 PowerShell 7 時，第一個需要它的工具呼叫會為目前使用者安裝 PowerShell 7.6.6（LTS），並告知安裝內容：
+
+- 來源為 GitHub 上官方的 PowerShell ZIP 發行檔；SHA-256 必須與 `scripts/ensure-pwsh.ps1` 內固定的雜湊一致，且 `pwsh.exe` 必須具有效的 Microsoft 簽章，否則拒絕安裝。
+- 安裝至 `%USERPROFILE%\.mathtype-for-word\PowerShell\<version>`。不需系統管理員權限、不跳出提示，也不修改 PATH 或登錄；僅供本 plugin 使用，刪除該資料夾即移除。此副本只隨本 plugin 的新版本更新。
+- 下載量約 106 MB，安裝後約占 300 MB。安裝期間，工具呼叫會回覆 PowerShell 7 正在安裝及其位置；安裝完成後的下一次呼叫回報安裝內容，再下一次才執行工作。
+
+未使用 MCP 時，可在任何終端機執行同一個安裝程式；它會輸出應使用的 `pwsh.exe` 路徑，下載可能需要數分鐘。`python scripts/mathtype_batch.py render` 在需要時也以相同方式安裝：
+
+```console
+powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/ensure-pwsh.ps1
+```
+
+若下載受阻（離線、proxy 或政策限制），請自行安裝 PowerShell 7，例如以 MSI 安裝程式（`winget install --id Microsoft.PowerShell --source winget --installer-type wix`，需系統管理員權限），或參閱 [Microsoft PowerShell 更新常見問題](https://learn.microsoft.com/zh-tw/powershell/scripting/install/microsoft-update-faq?view=powershell-7.6)。
+
 ## 透過 AI Agent 安裝
 
 若要在 Claude Code、Claude Desktop、Codex 或 ChatGPT Desktop 使用本工具，貼上以下 prompt，Agent 會依目前環境完成設定：
 
 ```text
-從 https://github.com/felimet/mathtype-for-word 安裝或升級 MathType for Word and PowerPoint toolkit。偵測我目前可用的終端機，並使用 PowerShell 7、Windows 上的 Bash，包括 Git Bash，或 CMD。不可在 Windows PowerShell 5.1 執行 Office bridge；若目前為 5.1，切換至 Git Bash 或 CMD，再呼叫 Windows pwsh.exe。從 WSL Bash 執行時，呼叫 Windows pwsh.exe，不使用 Linux pwsh。若沒有支援的終端機或找不到 pwsh.exe，停止執行並提示我依 https://learn.microsoft.com/zh-tw/powershell/scripting/install/microsoft-update-faq?view=powershell-7.6 安裝 PowerShell 7。確認桌面版 MathType for Windows ProductVersion 7.11.1.462，以及 Microsoft Word 與 PowerPoint 桌面版均可使用；安裝可攜式 skill、註冊本機 stdio MCP server、執行兩項 MathType probe 與 repository 測試、保留既有 Agent 設定，並列出所有異動檔案。輸出未包含可編輯 Equation.DSMT4 物件或 validation 未回傳 ok: true 時，不得宣稱完成。
+從 https://github.com/felimet/mathtype-for-word 安裝或升級 MathType for Word and PowerPoint toolkit。偵測我目前可用的終端機，並使用 PowerShell 7、Windows 上的 Bash，包括 Git Bash，或 CMD。不可在 Windows PowerShell 5.1 執行 Office bridge；若目前為 5.1，切換至 Git Bash 或 CMD，再呼叫 Windows pwsh.exe。從 WSL Bash 執行時，呼叫 Windows pwsh.exe，不使用 Linux pwsh。若找不到 pwsh.exe，以 Windows powershell.exe 執行 scripts/ensure-pwsh.ps1，為目前使用者安裝 PowerShell 7，並告訴我安裝了什麼；若安裝失敗，停止執行並提示我依 https://learn.microsoft.com/zh-tw/powershell/scripting/install/microsoft-update-faq?view=powershell-7.6 安裝 PowerShell 7。確認桌面版 MathType for Windows ProductVersion 7.11.1.462，以及 Microsoft Word 與 PowerPoint 桌面版均可使用；安裝可攜式 skill、註冊本機 stdio MCP server、執行兩項 MathType probe 與 repository 測試、保留既有 Agent 設定，並列出所有異動檔案。輸出未包含可編輯 Equation.DSMT4 物件或 validation 未回傳 ok: true 時，不得宣稱完成。
 ```
 
 再告訴 Agent 要處理的 DOCX 或 PPTX，以及需要建立的公式。
@@ -70,7 +86,7 @@ pwsh.exe -NoProfile -ExecutionPolicy Bypass -File scripts/mathtype-word.ps1 -Act
 將 `skills/mathtype-for-word` 複製至 `%USERPROFILE%\.codex\skills\mathtype-for-word` 或 `%USERPROFILE%\.agents\skills\mathtype-for-word`，再註冊 MCP server：
 
 ```console
-codex mcp add mathtype-for-word -- pwsh.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "<REPO_ROOT>\scripts\run-mcp.ps1"
+codex mcp add mathtype-for-word -- python "<REPO_ROOT>\scripts\mcp_server.py"
 codex mcp get mathtype-for-word
 ```
 
@@ -81,7 +97,7 @@ Release 亦包含 `.codex-plugin/plugin.json` 與 `dist/mathtype-for-word-plugin
 將 `skills/mathtype-for-word` 複製至 `%USERPROFILE%\.claude\skills\mathtype-for-word`，再註冊 MCP server：
 
 ```console
-claude mcp add --scope user mathtype-for-word -- pwsh.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "<REPO_ROOT>\scripts\run-mcp.ps1"
+claude mcp add --scope user mathtype-for-word -- python "<REPO_ROOT>\scripts\mcp_server.py"
 claude mcp get mathtype-for-word
 ```
 
@@ -95,8 +111,8 @@ Release 亦包含 `.claude-plugin/plugin.json`、`.mcp.json` 與合併 plugin �
 {
   "mcpServers": {
     "mathtype-for-word": {
-      "command": "pwsh.exe",
-      "args": ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "<REPO_ROOT>\\scripts\\run-mcp.ps1"]
+      "command": "python",
+      "args": ["<REPO_ROOT>\\scripts\\mcp_server.py"]
     }
   }
 }
@@ -134,7 +150,7 @@ ChatGPT 無法直接連接本專案隨附的本機 stdio MCP 命令；必須建�
 | Word `.docx` | 行內或置中的獨立 `Equation.DSMT4` OLE | MathType 原生編號與動態引用 |
 | PowerPoint `.pptx` | 直接在 PowerPoint 建立的置中浮動 `Equation.DSMT4` OLE | PowerPoint 不具備 Word 的 MathType 編號引用機制，本工具不以手打內容假冒 |
 
-PowerPoint 轉換會保持 Word、PowerPoint 與 MathType 隱藏，不使用滑鼠、鍵盤、焦點、`AppActivate` 或 `SendKeys`；轉移已轉換的 OLE 物件時會短暫使用 Windows 剪貼簿。
+PowerPoint 轉換會保持 Word、PowerPoint 與 MathType 隱藏，不使用滑鼠、鍵盤、焦點、`AppActivate` 或 `SendKeys`；轉移已轉換的 OLE 物件時會短暫使用 Windows 剪貼簿，並覆蓋使用者原本複製的內容。
 
 ## 驗證安裝
 
@@ -154,6 +170,8 @@ pwsh.exe -NoProfile -ExecutionPolicy Bypass -File tests/run-tests.ps1 -IncludeLi
 
 Bridge 會保留來源檔，先驗證同層暫存 Office 檔，再以原子方式發布；除非明確指定 `-Overwrite`，否則不覆寫既有輸出。所有可處理的結束路徑都會刪除帶有本次執行 token 的暫存 sibling，並只掃除命名格式完全相符且超過 24 小時的舊檔；MCP 逾時也會使用相同 token 要求清理。
 
+大型 Word 文件會分批在全新的 Word 工作階段中渲染（`batch_size`，預設 40），可中斷續跑，也可在背景執行並以 `get_mathtype_render_status` 查詢進度；整份清單嚴格驗證通過後才發布輸出。同一時間只執行一個渲染工作。逾時時只終止 bridge 記錄為自身啟動的 Office 程序；PowerPoint 作業不會關閉使用者原本已開啟的 PowerPoint。
+
 ## Repository 結構
 
 | 路徑 | 用途 |
@@ -163,6 +181,7 @@ Bridge 會保留來源檔，先驗證同層暫存 Office 檔，再以原子方�
 | `config/defaults.json` | Word 公式編號預設設定 |
 | `evals/fixtures/` | 真實繁中、英文 DOCX/PPTX 評測輸入 |
 | `tests/` | 靜態、MCP、Office 整合、視覺與封裝測試 |
+| `CHANGELOG.md` | 各版本變更紀錄 |
 
 ## 封裝
 

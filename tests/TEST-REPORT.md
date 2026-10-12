@@ -1,10 +1,58 @@
 # Test report
 
+## 1.4.0
+
+Date: 2026-10-13
+
+Host: Windows 11, Word 16.0, PowerPoint 16.0, MathType 7.11.1.462, PowerShell 7.6.6, Python 3.13.14
+
+### Validators
+
+| Validator | Result |
+|---|---|
+| Codex `skill-creator/scripts/quick_validate.py` | PASS |
+| Claude official `skill-creator/scripts/quick_validate.py` | PASS |
+| Codex `plugin-creator/scripts/validate_plugin.py` | Not re-run: not installed on this host |
+
+Both skill validators ran with `PYTHONUTF8=1` and an ephemeral `uv run --with pyyaml`.
+
+### Office-free suite
+
+`pwsh.exe -NoProfile -ExecutionPolicy Bypass -File tests\run-tests.ps1`: 97 Python tests passed, 1 skipped (live MCP calls), and every PowerShell file parsed. It also passes with `TEMP` set to an 8.3 short path, as on GitHub's Windows runners. The same suite run by Windows PowerShell 5.1 with no PowerShell 7 on PATH skips the tests that need PowerShell 7 and passes the rest without starting an install. The suite covers, without Office:
+
+- the batched job runner against a fake bridge that applies the bridge's validation rules (chunk planning, anchored references, splitting, resume, older job state, timeouts, background start, status cleanup);
+- MCP tool listing, refusals during a render job, and bridge switch mapping;
+- the bridge watchdog: kill at the deadline, kill-on-close job, cleanup of only logged and windowless Office processes (window stand-ins of class `OpusApp`, `screenClass` and a dialog class);
+- the bridge lock and the warning-preference journal on a scratch registry key and mutex (contention, killed runs, empty and unreadable journals);
+- manifest normalization through the real bridge, including every chunk the planner produces;
+- ASCII JSON through ANSI code pages, mark-file validation, Word Find escaping and exact-text counting, paragraph boundaries, clipboard retry timing;
+- PowerShell 7 installation: `scripts\ensure-pwsh.ps1` run by Windows PowerShell 5.1 against a local HTTP server that serves this host's Microsoft-signed PowerShell 7.6.6 as the release archive. Covered: install and reuse, removal of an older own copy, a refused older own copy, SHA-256 mismatch, a pwsh.exe that reports another version, an unsigned pwsh.exe and one signed by another publisher, an unpinned version, killed-install staging, a second installer waiting on the lock, and cleanup once PowerShell 7 comes from elsewhere. In the MCP server: one install per process, the notice in a reply of its own, the installing and failed replies, a PowerShell 6 `pwsh.exe` on PATH, a stale `MATHTYPE_WORD_POWERSHELL`, the job runner's synchronous install, and a `pwsh.exe` that cannot start;
+- the packages in `dist\` against the runtime files they ship.
+
+### Live Word integration
+
+`tests\run-live-integration.ps1`: PASS, re-run after the PowerShell 7 installation change.
+
+- Single session: 6 MathType objects, 3 native numbers `(1)`, `(2)`, `(3)`, 2 native references, no clipped object. The exactly spaced paragraph switched to at-least spacing outside the line grid (`w:snapToGrid w:val="0"`), and the exact row of a table with a vertically merged column switched to at-least.
+- Batched with `--batch-size 1` into an output path with CJK characters and a space: 8 Word sessions, each reference in its own session reaching its target through the anchor bookmark; the same counts and repairs, both references bound to the right equations, no anchor left in the output, CJK path intact in ASCII JSON.
+- Plain-text draft: scan listed the Word superscripts with their offsets (including one at the end of a table cell and a subscript after the table), the typed reference, and the table cell; mark replaced 5 spans, including `a^2 + b^2 = c^2` and the reference number with `Eq.` kept in the prose; the render of the marked copy produced 4 objects, 1 number and 1 reference.
+- After every run: no Word process left, no journal left, and the MathType warning preferences back at their pre-run `REG_SZ` values.
+
+### Live PowerPoint
+
+The PowerPoint render could not be re-run on this host: another program held the Windows clipboard open for the whole session (`OpenClipboard` failed with `ERROR_ACCESS_DENIED`, the holder opened it without a window, the last writer was a chat application). The 1.3.0 bridge fails the same way on this host. Verified live instead: the failure path left no Office process and no journal; a presentation the user has open is refused; a validation run attached to the user's PowerPoint left it and its presentation open. The 1.3.0 evidence below still describes the render path itself.
+
+### PowerShell 7 installation
+
+Not run against GitHub: this host already has PowerShell 7.6.6, and the tests download nothing. The pinned SHA-256 values of `PowerShell-7.6.6-win-x64.zip` and `PowerShell-7.6.6-win-arm64.zip` match the asset digests that the GitHub release API reports.
+
+## 1.3.0
+
 Date: 2026-07-22
 
 Host: Windows, Word 16.0, PowerPoint 16.0, MathType 7.11.1.462, PowerShell 7.6.3, Python 3.13
 
-## Official validators
+### Official validators
 
 | Validator | Result |
 |---|---|
@@ -14,7 +62,7 @@ Host: Windows, Word 16.0, PowerPoint 16.0, MathType 7.11.1.462, PowerShell 7.6.3
 
 The two skill validators were run with `PYTHONUTF8=1` and ephemeral `uv --with pyyaml` because the validator scripts otherwise use Windows CP950 for `Path.read_text()` and import PyYAML. Neither setting is a runtime dependency of this toolkit.
 
-## Automated suite
+### Automated suite
 
 Command:
 
@@ -32,7 +80,7 @@ Result: PASS
 - Live Word and silent hidden Word-to-PowerPoint MathType renders plus read-only validation: passed.
 - A real MCP `tools/call` render and validate round trip produced an English PPTX with `mathtype_objects=1` and `mathml_verified=1`.
 
-## Live Word integration evidence
+### Live Word integration evidence
 
 Fixture content:
 
@@ -64,7 +112,7 @@ Verified mechanisms:
 - Number format: `(1)` and `(2)`, with no chapter, section, or separator.
 - Placement: `MTDisplayEquation` paragraphs contain center/right tab stops and a right-alignment tab before each number.
 
-## Live PowerPoint integration evidence
+### Live PowerPoint integration evidence
 
 The PowerPoint test used `en-presentation-draft.pptx` and its Presentation MathML manifest.
 
@@ -89,13 +137,13 @@ Verified mechanisms:
 - Validation reopens the PPTX, reads MathML from the OLE `IDataObject`, rejects Unicode replacement characters, and compares the normalized content signature with the manifest.
 - The equation is centered to within one point and the complete marker text box is removed.
 
-## Visual inspection
+### Visual inspection
 
 - The Word DOCX was previously exported through Word to PDF/PNG; centered displays, right-tab numbers, live references, fraction, radical, scripts, and inline placement rendered correctly.
 - The Traditional Chinese PPTX was exported at 1600 x 900. `Q = m c_p ΔT` rendered cleanly and centered between its lead-in and `其中，` paragraph with no clipping, overlap, or replacement glyphs.
 - Both bilingual DOCX eval outputs were exported to PDF/PNG. The equations were centered, `(1)`/`(2)` were aligned at the right MathType tab, and the Chinese `由式 (1)` / `如式 (2)` plus English `Equation (1)` / `Eq. (2)` references rendered in the surrounding prose.
 
-## Repository evals and independent grading
+### Repository evals and independent grading
 
 The repository defines seven evals and uses repository fixtures rather than a hard-coded external path:
 
@@ -111,7 +159,7 @@ The earlier five-eval benchmark was graded once per eval and configuration. The 
 
 Executor timing, token usage, and tool-call counts were not captured during execution. Their machine-readable fields are explicit zero placeholders and are not performance measurements. The static review page plus copied benchmark and grader summaries are preserved under `evals/results/2026-07-20-iteration-2`; all per-run grading, metrics, timing, transcripts, and artifacts remain under `mathtype-for-word-workspace/iteration-2`.
 
-## Operational findings
+### Operational findings
 
 - PowerShell 7 is required. Windows PowerShell 5.1 blocked on MathType macro calls and its older C# compiler cannot compile the bridge helper.
 - PowerPoint conversion now requires hidden Word readiness because MathType 7 rejects direct `IDataObject.SetData` writes for all tested MathML formats. Reusing the proven hidden Word `Toggle TeX` path avoids visible MathType editor automation.

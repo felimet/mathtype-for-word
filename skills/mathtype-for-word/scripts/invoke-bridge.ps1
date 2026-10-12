@@ -4,6 +4,7 @@ param(
     [string[]]$BridgeArguments
 )
 
+# Runs under Windows PowerShell 5.1 or PowerShell 7; the bridge itself always runs in PowerShell 7.
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $candidates = @()
@@ -15,5 +16,12 @@ $bridge = $candidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf 
 if ($null -eq $bridge) {
     throw 'The full mathtype-for-word plugin is not installed. Register its MCP server or set MATHTYPE_WORD_PLUGIN_ROOT.'
 }
-& pwsh.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $bridge @BridgeArguments
+$found = & (Join-Path (Split-Path -Parent $bridge) 'ensure-pwsh.ps1') | Select-Object -Last 1 | ConvertFrom-Json
+if (-not $found.ok) {
+    throw "PowerShell 7 is required, and installing it automatically failed: $($found.error) Install it with 'winget install --id Microsoft.PowerShell --source winget --installer-type wix', then retry."
+}
+if ($found.installed) {
+    [Console]::Error.WriteLine("[NOTICE] PowerShell 7 was not installed, so PowerShell $($found.version) was installed for the current user in $($found.folder) from $($found.source) (SHA-256 checked, signed by Microsoft). Only this plugin uses it; PATH is unchanged. Tell the user.")
+}
+& $found.path -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $bridge @BridgeArguments
 exit $LASTEXITCODE

@@ -4,7 +4,7 @@ description: Create, replace, number, cross-reference, update, inspect, or valid
 license: MIT
 metadata:
   author: Jia-Ming Zhou (Felimet)
-  version: 1.3.0
+  version: 1.4.0
 ---
 
 # MathType for Word and PowerPoint
@@ -29,7 +29,9 @@ Create real MathType equations in DOCX and PPTX, preserving MathType-native Word
 - Use PowerShell 7 directly when the active host is `pwsh.exe` 7 or later.
 - From Bash on Windows, including Git Bash, or from CMD, invoke the same Windows `pwsh.exe` bridge commands. From WSL Bash, invoke Windows `pwsh.exe`; Linux `pwsh` cannot automate Windows Office COM.
 - Never run the bridge inside Windows PowerShell 5.1. If 5.1 is active, switch to Git Bash or CMD and invoke Windows `pwsh.exe` there.
-- If no supported terminal or no `pwsh.exe` is available, stop and ask the user to install PowerShell 7 using <https://learn.microsoft.com/zh-tw/powershell/scripting/install/microsoft-update-faq?view=powershell-7.6>. Do not silently downgrade the workflow.
+- When `pwsh.exe` is missing, the MCP server installs PowerShell 7.6.6 (LTS) for the current user on the first tool call that needs it (official GitHub ZIP into `%USERPROFILE%\.mathtype-for-word\PowerShell\<version>`, pinned SHA-256 and Microsoft signature checked, no administrator rights, PATH unchanged). While it installs, the call fails with `powershell.status: installing`; tell the user and call the tool again a minute later. The call after it finishes fails with `powershell.status: installed` and a `notice`; relay the notice and call the tool again. Without MCP, run `powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/ensure-pwsh.ps1` from any terminal, with a shell timeout of several minutes (it downloads about 106 MB); it prints one JSON line whose `path` replaces `pwsh.exe` in the commands below, and `installed: true` means it installed PowerShell 7 now. `python scripts\mathtype_batch.py render` installs it the same way and returns the `notice`.
+- Whenever PowerShell 7 is installed this way (a tool result's `notice`, or `installed: true`), tell the user which version was installed, the folder, and the source, in the user's language.
+- If the installation fails (`powershell.status: failed`, or `ok: false`), stop and ask the user to install PowerShell 7, for example with the MSI installer `winget install --id Microsoft.PowerShell --source winget --installer-type wix` (administrator rights), or using <https://learn.microsoft.com/zh-tw/powershell/scripting/install/microsoft-update-faq?view=powershell-7.6>. Do not silently downgrade the workflow.
 - Read [installation-matrix.md](references/installation-matrix.md) for cross-shell commands and agent-specific installation paths.
 
 ## Shared output coordination
@@ -47,10 +49,10 @@ Create real MathType equations in DOCX and PPTX, preserving MathType-native Word
 
 1. Preserve the input DOCX and choose an explicit output path.
 2. Call `probe_mathtype_word`. Stop on a failed prerequisite; report the exact failed check.
-3. Scan the complete document twice. First inventory every equation candidate and later prose reference. Then classify each candidate as `inline`, `display`, or `display_numbered`, and each prose occurrence as `reference`, using [academic-equation-style.md](references/academic-equation-style.md). Decide every identifier, unique marker, TeX, layout, numbered state, reference marker, and target.
+3. Scan the complete document twice. First inventory every equation candidate and later prose reference. Then classify each candidate as `inline`, `display`, or `display_numbered`, and each prose occurrence as `reference`, using [academic-equation-style.md](references/academic-equation-style.md). Decide every identifier, unique marker, TeX, layout, numbered state, reference marker, and target. When the draft holds plain-text mathematics or placeholders instead of `{{MATH:…}}` markers, call `scan_mathtype_candidates` first: it lists Word's paragraph numbers, the exact paragraph text, and math signals, including sub/superscripts that plain text loses. Then write a marks file and call `mark_mathtype_document` to save a marked copy, and render that copy. For a reference, mark only the number, such as `(1)`; `Eq.` or `式` stays in the prose. A display equation's marker must end up alone in its paragraph: mark the whole paragraph text only when the paragraph holds nothing but the formula. When a display formula shares its paragraph with prose (lines joined by Shift+Enter included), ask the user to put it in its own paragraph, or keep it inline if the user agrees, and scan again before marking.
 4. Create a schema v1 JSON manifest. Read [workflow-and-schema.md](references/workflow-and-schema.md) for the exact contract and examples.
 5. For academic prose and mathematical typography, apply [academic-equation-style.md](references/academic-equation-style.md). A display equation must be introduced in the preceding prose and followed by “其中，” plus definitions of every symbol, index, superscript, subscript, unit, and physical meaning that is not already unambiguous. Audit the whole document so variables, vectors, matrices, functions, constants, indices, and units retain one consistent style.
-6. Call `render_mathtype_word_document`. Do not edit the same DOCX concurrently in Word.
+6. Call `render_mathtype_word_document`. Do not edit the same DOCX concurrently in Word. Manifests whose equations plus references exceed `batch_size` (default 40) render in fresh Word sessions with checkpoints; when the render may outlast the client's tool-call time limit, pass `background: true` and poll `get_mathtype_render_status` while its status is `queued` or `running`, and stop on any other status. On `interrupted`, call render again with the same paths (and `background: true` again) to resume from the last checkpoint. On `failed`, read `error` first: a bad marker, TeX, or validation result needs a corrected manifest or document, which starts the job over.
 7. Call `validate_mathtype_word_document` with the same manifest. A render is incomplete until validation returns `ok: true`.
 8. For complex fractions, matrices, aligned systems, accents, or nested scripts, open/render the result and visually inspect it. Structural checks cannot prove typographic correctness.
 9. Report the output path, counts, native number/reference mechanism, validation result, and any limitations.
@@ -71,21 +73,29 @@ Use the bundled local MCP server when available:
 
 - `probe_mathtype_word`: read-only prerequisite check.
 - `configure_mathtype_word_defaults`: persist the packaged default profile and MathType warning preferences. Invoke only when the user asks to configure defaults or during an explicitly requested installation.
-- `render_mathtype_word_document`: marker-driven conversion and reference placement.
+- `scan_mathtype_candidates`: read-only scan of a draft for plain-text mathematics; writes a candidates JSON.
+- `mark_mathtype_document`: replace exact text spans with markers in a new DOCX; all marks apply or nothing is saved.
+- `render_mathtype_word_document`: marker-driven conversion and reference placement; batched, resumable, and optionally in the background.
+- `get_mathtype_render_status`: progress, log tail, and final result of a render job, keyed by its output path.
 - `validate_mathtype_word_document`: read-only structural validation.
 - `update_mathtype_word_fields`: update number/reference fields after moving, adding, or deleting equations.
 - `probe_mathtype_powerpoint`: verify the desktop PowerPoint and MathType 7 integration.
 - `render_mathtype_powerpoint_presentation`: replace marker-only text boxes with centered, editable MathType OLE objects.
 - `validate_mathtype_powerpoint_presentation`: verify expected named OLE objects, centering, and resolved markers.
 
-If MCP is unavailable, invoke the same bridge directly from the plugin root:
+If MCP is unavailable, run the same bridge and job runner directly from the plugin root. Render through the job runner, which batches, checkpoints, and resumes exactly like `render_mathtype_word_document`; run the same `render` command again to resume:
 
 ```powershell
 # Resolve these variables from the user's attached or repository files; never reuse a sample path literally.
 pwsh.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts\mathtype-word.ps1 -Action probe
-pwsh.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts\mathtype-word.ps1 -Action render -InputPath $inputDocx -OutputPath $outputDocx -ManifestPath $manifestJson
+pwsh.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts\mathtype-word.ps1 -Action scan -InputPath $draftDocx -OutputPath $candidatesJson
+pwsh.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts\mathtype-word.ps1 -Action mark -InputPath $draftDocx -OutputPath $inputDocx -MarksPath $marksJson
+python scripts\mathtype_batch.py render --input $inputDocx --output $outputDocx --manifest $manifestJson --batch-size 40
+python scripts\mathtype_batch.py status --output $outputDocx
 pwsh.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts\mathtype-word.ps1 -Action validate -InputPath $outputDocx -ManifestPath $manifestJson
 ```
+
+Without Python, `-Action render` on the bridge renders in one Word session; use it only for manifests of at most 40 equations plus references. Every command prints one ASCII JSON line.
 
 ## Manifest decisions
 
@@ -101,6 +111,7 @@ pwsh.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File script
 - Every reference target must exist and be numbered.
 - Keep TeX on one line. Prefer MathType-compatible TeX primitives. Do not depend on document preambles, user macros, packages, `\label`, or `\ref`.
 - Escape backslashes correctly in JSON. For example, TeX `\frac{a}{b}` is JSON string `"\\frac{a}{b}"`.
+- `numbered` defaults to `false` and `references` may be omitted. A paragraph with exact line spacing, or a table row with an exact height, lower than a new equation switches to an at-least value of the same size; set `exact_line_spacing: "keep"` only when the user requires exact spacing, and report the clipped-equation warning.
 
 ## Numbering and reference policy
 
@@ -136,8 +147,9 @@ The screenshot-level workflow also includes symbol palettes, equation browsing, 
 
 - Use desktop **MathType for Windows**, not the Microsoft 365 task-pane add-in.
 - Treat every PowerPoint equation as a floating object; there is no inline OLE placement.
-- Keep Word, PowerPoint, and MathType hidden. The bridge uses hidden Word conversion and briefly transfers the OLE object through the Windows clipboard without mouse, keyboard, focus, `AppActivate`, or `SendKeys`.
-- Do not launch Word for a PPTX job; the direct PowerPoint path must leave the set of `WINWORD` process IDs unchanged.
+- Keep Word, PowerPoint, and MathType hidden. The bridge uses hidden Word conversion and briefly transfers the OLE object through the Windows clipboard, replacing what the user had copied, without mouse, keyboard, focus, `AppActivate`, or `SendKeys`.
+- Do not open Word yourself for a PPTX job. `render_mathtype_powerpoint_presentation` launches one hidden Word conversion instance owned by the bridge; after the job, the set of `WINWORD` process IDs must return to its pre-job baseline.
+- Ask the user to save and close a presentation they have open before rendering or validating it; the bridge refuses a presentation that is already open in PowerPoint.
 - Do not promise MathType-native PowerPoint equation numbering or cross-references. Keep those features in Word, or ask the user to accept a clearly labeled static slide annotation.
 - Do not rasterize equations. A valid PPTX output retains `Equation.DSMT4` and opens in desktop MathType when edited.
 
@@ -159,9 +171,10 @@ Treat any of these as a failed deliverable:
 - If probe fails, use [troubleshooting.md](references/troubleshooting.md); do not silently fall back.
 - If Toggle TeX does not create exactly one `Equation.DSMT4` object, preserve the input, stop, and report the equation ID and TeX.
 - If MathType fails to create or resolve `MTReference`, preserve the failed output only for diagnosis and do not present it as complete.
-- If the MCP watchdog reports a timeout, record its isolated Word PID and cleanup result, verify the warning preferences were restored, then retry only the smallest fixture once before escalating.
+- If the MCP watchdog reports a timeout, record `bridge_office_pids`, `isolated_office_processes_terminated`, `new_office_pids_left_running`, and the cleanup result, verify the warning preferences were restored (`%APPDATA%\MathTypeForWordAgent\warning-preferences.json` absent means the user's values are back; present means the next render, render-pptx, or configure-defaults call restores them when it takes the bridge lock), then retry only the smallest fixture once before escalating. For `render_mathtype_word_document`, these keys are in the `timeouts` list of the render result, successful or failed, or of `get_mathtype_render_status`; other tools report them at the top level. The watchdog terminates only Office processes the bridge logged as its own; it never terminates other new Word or PowerPoint windows.
+- A bridge killed before it finishes (with its MCP server, or by ending a background job's process, the `pid` in its status) skips its own cleanup. The next render, render-pptx, or configure-defaults call ends the hidden Word or PowerPoint that the killed run launched (unless it now shows a document window or a slide show) and restores the warning preferences when it takes the bridge lock.
 - If the requested TeX is outside MathType's supported conversion subset, simplify it, split it into supported expressions, or ask for a MathType-authored source equation.
-- Word COM is single-user desktop automation. Do not run two render jobs concurrently in the same Windows profile.
+- Word COM is single-user desktop automation. Do not run two render jobs concurrently in the same Windows profile. The job runner refuses a second Word render job, and the MCP tools `render_mathtype_powerpoint_presentation` and `configure_mathtype_word_defaults` are refused while a Word render job is active. A direct `mathtype-word.ps1 -Action render-pptx` or `-Action configure-defaults` call is not checked: do not start one while `python scripts\mathtype_batch.py status --output <docx>` reports `queued` or `running`.
 
 ## Reference routing
 

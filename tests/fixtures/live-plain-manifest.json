@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "equations": [
+    {
+      "id": "energy",
+      "marker": "{{MATH:energy}}",
+      "tex": "E = mc^2",
+      "layout": "inline"
+    },
+    {
+      "id": "roots",
+      "marker": "{{MATH:roots}}",
+      "tex": "x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}",
+      "layout": "display",
+      "numbered": true
+    },
+    {
+      "id": "sum",
+      "marker": "{{MATH:sum}}",
+      "tex": "\\alpha + \\beta",
+      "layout": "inline"
+    },
+    {
+      "id": "pythagoras",
+      "marker": "{{MATH:pythagoras}}",
+      "tex": "a^2 + b^2 = c^2",
+      "layout": "inline"
+    }
+  ],
+  "references": [
+    {
+      "marker": "{{EQREF:roots}}",
+      "target": "roots"
+    }
+  ]
+}
