@@ -1,5 +1,47 @@
 # Test report
 
+## 1.4.2
+
+Date: 2026-10-14
+
+Host: Windows 11, Word 16.0, MathType 7.11.1.462, PowerShell 7.6.6, Python 3.13.14, codex-cli 0.162.1 (npm), 0.153.4
+and 0.144.1 (bundled with the Codex desktop app), Claude Code 2.1.296
+
+### Validators
+
+| Validator | Result |
+|---|---|
+| Codex `skill-creator/scripts/quick_validate.py` | PASS |
+| Claude official `skill-creator/scripts/quick_validate.py` | PASS |
+| `claude plugin validate .` (marketplace manifest) | PASS |
+| `claude plugin validate .claude-plugin/plugin.json` | PASS |
+| `plugin-scanner scan` 3.43.1 | 94/100 (A), 0 critical, high, medium or low findings; 83/100 on 1.4.1 |
+
+### Office-free suite
+
+`pwsh.exe -NoProfile -ExecutionPolicy Bypass -File tests\run-tests.ps1`: 104 Python tests passed, 1 skipped (live
+MCP calls), and every PowerShell file parsed. New coverage: both marketplaces list the repository root under the
+plugin's name, and both marketplace names match the `@mathtype-for-word` suffix in the documented commands.
+
+### Marketplace installs
+
+Each run used an isolated `CODEX_HOME` or `CLAUDE_CONFIG_DIR` and installed from the `release/1.4.2` branch on
+GitHub; the user's own Codex and Claude Code configuration was not touched. The first install ran before the version
+bump, so it installed 1.4.1, and the upgrade commands then moved it to 1.4.2.
+
+- Codex: `codex plugin marketplace add felimet/mathtype-for-word --ref release/1.4.2` and
+  `codex plugin add mathtype-for-word@mathtype-for-word` installed the plugin. `codex plugin marketplace upgrade
+  mathtype-for-word` and the same `codex plugin add` installed 1.4.2 and removed the 1.4.1 cache. `codex mcp get`
+  showed the plugin cache folder as `cwd`, `tool_timeout_sec` 1200 and the forwarded `env_vars`. Through
+  `codex app-server`, with no model call, under 0.162.1, 0.153.4 and 0.144.1: server 1.4.2 with 11 tools;
+  `probe_mathtype_word` reported `windows: true` and Word ready and left no Word process behind; relative paths
+  came back as an `isError` result.
+- Claude Code: `claude plugin marketplace add felimet/mathtype-for-word#release/1.4.2` and
+  `claude plugin install mathtype-for-word@mathtype-for-word` installed the plugin. `claude plugin marketplace
+  update mathtype-for-word` and `claude plugin update mathtype-for-word@mathtype-for-word` moved it to 1.4.2.
+  `claude mcp list` reported `plugin:mathtype-for-word:mathtype-for-word` connected, and `claude plugin details`
+  listed one skill and one MCP server.
+
 ## 1.4.1
 
 Date: 2026-10-14
