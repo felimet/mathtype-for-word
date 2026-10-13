@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -35,7 +36,7 @@ class McpProtocolTests(unittest.TestCase):
             if stream is not None:
                 stream.close()
 
-    def request(self, payload: dict) -> dict:
+    def request(self, payload: Any) -> Any:
         assert self.process.stdin is not None
         assert self.process.stdout is not None
         self.process.stdin.write(json.dumps(payload, separators=(",", ":")) + "\n")
@@ -57,6 +58,7 @@ class McpProtocolTests(unittest.TestCase):
                 },
             }
         )
+        self.assertEqual(response["result"]["protocolVersion"], "2025-06-18")
         self.assertEqual(response["result"]["serverInfo"]["name"], "mathtype-for-word")
         self.assertIn("tools", response["result"]["capabilities"])
 
@@ -97,7 +99,93 @@ class McpProtocolTests(unittest.TestCase):
             }
         )
         self.assertEqual(unknown_tool["id"], 5)
-        self.assertEqual(unknown_tool["error"]["code"], -32603)
+        self.assertEqual(unknown_tool["error"]["code"], -32602)  # tools spec: unknown tool is Invalid params
+        bad_arguments = self.request(
+            {
+                "jsonrpc": "2.0",
+                "id": 6,
+                "method": "tools/call",
+                "params": {"name": "get_mathtype_render_status", "arguments": {}},
+            }
+        )
+        self.assertEqual(bad_arguments["id"], 6)
+        self.assertTrue(bad_arguments["result"]["isError"])  # 2025-11-25: input errors are tool execution errors
+        self.assertIn("output_path", bad_arguments["result"]["structuredContent"]["error"])
+
+    def initialize(self, request_id: int, version: Any) -> str:
+        params: dict[str, Any] = {"capabilities": {}, "clientInfo": {"name": "unit-test", "version": "1"}}
+        if version is not None:
+            params["protocolVersion"] = version
+        response = self.request({"jsonrpc": "2.0", "id": request_id, "method": "initialize", "params": params})
+        self.assertEqual(response["id"], request_id)
+        return response["result"]["protocolVersion"]
+
+    def test_initialize_answers_a_supported_version_or_the_latest(self) -> None:
+        for request_id, version in enumerate(("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"), 10):
+            with self.subTest(requested=version):
+                self.assertEqual(self.initialize(request_id, version), version)
+        for request_id, version in enumerate(("2026-07-28", "1999-01-01", "", None, 20250618), 20):
+            with self.subTest(requested=version):
+                self.assertEqual(self.initialize(request_id, version), "2025-11-25")
+
+    def test_server_discover_reports_a_legacy_server(self) -> None:
+        discover = self.request(
+            {
+                "jsonrpc": "2.0",
+                "id": "discover-1",
+                "method": "server/discover",
+                "params": {
+                    "_meta": {
+                        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                        "io.modelcontextprotocol/clientCapabilities": {},
+                        "io.modelcontextprotocol/clientInfo": {"name": "unit-test", "version": "1"},
+                    }
+                },
+            }
+        )
+        self.assertEqual(discover["id"], "discover-1")
+        self.assertNotIn("result", discover)
+        self.assertEqual(discover["error"]["code"], -32601)
+        self.assertEqual(self.initialize(31, "2025-11-25"), "2025-11-25")
+        self.assertEqual(self.initialize(32, "2025-06-18"), "2025-06-18")
+
+    def test_unreadable_messages_and_notifications_do_not_stop_the_server(self) -> None:
+        assert self.process.stdin is not None
+        # Text-mode pipes on Windows write each "\n" as "\r\n".
+        malformed = ["[" * 20000 + "]" * 20000 + "\n", "Content-Length: -1\n\n",
+                     "Content-Length: 99999999999999999999999\n\n"]
+        for number, message in enumerate(malformed, 60):
+            self.process.stdin.write(message)
+            self.process.stdin.flush()
+            self.assertEqual(self.request({"jsonrpc": "2.0", "id": number, "method": "ping"}).get("error", {}).get(
+                "code"), -32700)  # the parse error comes first; the ping's own answer follows
+            self.assertEqual(json.loads(self.process.stdout.readline())["id"], number)
+        null = self.request(None)
+        self.assertEqual(null["error"]["code"], -32600)  # a JSON null is a bad request, not the end of input
+        for notification in ({"jsonrpc": "2.0", "method": "ping"},
+                             [{"jsonrpc": "2.0", "method": "ping"},
+                              {"jsonrpc": "2.0", "method": "tools/call",
+                               "params": {"name": "get_mathtype_render_status", "arguments": {}}}]):
+            self.process.stdin.write(json.dumps(notification) + "\n")
+            self.process.stdin.flush()
+        self.assertEqual(self.request({"jsonrpc": "2.0", "id": 70, "method": "ping"}), {"jsonrpc": "2.0", "id": 70,
+                                                                                         "result": {}})
+
+    def test_batch_requests_get_a_batch_response(self) -> None:
+        responses = self.request(
+            [
+                {"jsonrpc": "2.0", "id": 40, "method": "ping"},
+                {"jsonrpc": "2.0", "method": "notifications/initialized"},
+                {"jsonrpc": "2.0", "id": 41, "method": "does/not/exist"},
+            ]
+        )
+        self.assertIsInstance(responses, list)
+        self.assertEqual([response["id"] for response in responses], [40, 41])
+        self.assertEqual(responses[0]["result"], {})
+        self.assertEqual(responses[1]["error"]["code"], -32601)
+        empty = self.request([])
+        self.assertIsNone(empty["id"])
+        self.assertEqual(empty["error"]["code"], -32600)
 
     def test_server_leaves_the_folder_it_was_started_in(self) -> None:
         # Codex starts the server in the plugin's install folder, which an update must be able to replace.

@@ -22,7 +22,8 @@ SERVER_VERSION = "1.4.0"
 # Absolute: main() leaves the folder the server was started in.
 SCRIPT_PATH = Path(__file__).resolve().with_name("mathtype-word.ps1")
 ENSURE_POWERSHELL_PATH = SCRIPT_PATH.with_name("ensure-pwsh.ps1")
-DEFAULT_PROTOCOL_VERSION = "2025-06-18"
+# initialize-era MCP revisions this server implements, newest first. 2026-07-28 is absent on purpose.
+SUPPORTED_PROTOCOL_VERSIONS = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05")
 WORD_COMMANDS_KEY = r"Software\Design Science\DSMT7\WordCommands"
 # Same names and paths as $script:WarningPreferenceNames, $script:WarningJournalPath and the bridge mutex.
 WARNING_PREFERENCE_NAMES = ("NoEqnNumWarningDlg", "NoInsertEqnRefDlg", "NoSlowUpdateEqnDlg")
@@ -41,6 +42,8 @@ _BRIDGE_JOB: int | None = None
 POWERSHELL_INSTALL_WAIT_SECONDS = 45
 POWERSHELL_INSTALL_TIMEOUT_SECONDS = 20 * 60
 POWERSHELL_VARIABLE = "MATHTYPE_WORD_POWERSHELL"
+_END_OF_INPUT = object()
+MAX_MESSAGE_BYTES = 64 * 1024 * 1024  # a Content-Length beyond this is a framing error, not a message
 POWERSHELL_INSTALL_FOLDER = r"%USERPROFILE%\.mathtype-for-word\PowerShell"  # ensure-pwsh.ps1's default InstallRoot
 MANUAL_POWERSHELL_INSTALL = "winget install --id Microsoft.PowerShell --source winget --installer-type wix"
 _powershell_install: dict[str, Any] = {"thread": None, "result": None, "notice": None}
@@ -903,7 +906,11 @@ def _call_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     if missing_powershell is not None:
         result = missing_powershell
     elif name in local:
-        result = local[name](arguments)
+        try:
+            result = local[name](arguments)
+        except (KeyError, TypeError, ValueError) as exc:  # bad arguments or a local failure: a tool error, not a protocol one
+            _log(traceback.format_exc())
+            result = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
     else:
         result = _refuse_during_render_job(actions[name]) or _invoke_bridge(actions[name], arguments)
     if _powershell_install["notice"]:
@@ -917,16 +924,18 @@ def _call_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _read_message(stream: BinaryIO) -> dict[str, Any] | None:
+def _read_message(stream: BinaryIO) -> Any:
     line = stream.readline()
     if not line:
-        return None
+        return _END_OF_INPUT
     while line in (b"\r\n", b"\n"):
         line = stream.readline()
         if not line:
-            return None
+            return _END_OF_INPUT
     if line.lower().startswith(b"content-length:"):
         length = int(line.split(b":", 1)[1].strip())
+        if not 0 <= length <= MAX_MESSAGE_BYTES:  # read(-1) would wait for the end of input
+            raise ValueError(f"Content-Length {length} is outside 0..{MAX_MESSAGE_BYTES}")
         while True:
             header = stream.readline()
             if header in (b"\r\n", b"\n", b""):
@@ -936,7 +945,7 @@ def _read_message(stream: BinaryIO) -> dict[str, Any] | None:
     return json.loads(line.decode("utf-8"))
 
 
-def _write_message(message: dict[str, Any]) -> None:
+def _write_message(message: dict[str, Any] | list[dict[str, Any]]) -> None:
     # ASCII escapes keep the wire format independent of the stdout code page (cp950, cp1252, ...).
     data = json.dumps(message, separators=(",", ":"))
     sys.stdout.write(data + "\n")
@@ -961,11 +970,12 @@ def _handle(message: dict[str, Any]) -> dict[str, Any] | None:
     if method in ("notifications/initialized", "notifications/cancelled"):
         return None
     if method == "initialize":
-        requested = params.get("protocolVersion") or DEFAULT_PROTOCOL_VERSION
+        requested = params.get("protocolVersion")
+        version = requested if requested in SUPPORTED_PROTOCOL_VERSIONS else SUPPORTED_PROTOCOL_VERSIONS[0]
         return _success(
             request_id,
             {
-                "protocolVersion": requested,
+                "protocolVersion": version,
                 "capabilities": {"tools": {"listChanged": False}},
                 "serverInfo": {"name": SERVER_NAME, "version": SERVER_VERSION},
                 "instructions": (
@@ -983,10 +993,26 @@ def _handle(message: dict[str, Any]) -> dict[str, Any] | None:
     if method == "tools/list":
         return _success(request_id, {"tools": TOOLS})
     if method == "tools/call":
-        return _success(request_id, _call_tool(str(params.get("name", "")), params.get("arguments") or {}))
+        name = str(params.get("name", ""))
+        if not any(tool["name"] == name for tool in TOOLS):
+            return _error(request_id, -32602, f"Unknown tool: {name}")
+        return _success(request_id, _call_tool(name, params.get("arguments") or {}))
     if request_id is None:
         return None
     return _error(request_id, -32601, f"Method not found: {method}")
+
+
+def _dispatch(message: Any) -> dict[str, Any] | None:
+    """One JSON-RPC message in, its response out (None for a notification); never raises."""
+    if not isinstance(message, dict):
+        return _error(None, -32600, "Invalid Request")
+    if "id" not in message:  # a notification is never answered, and none the server knows asks it to act
+        return None
+    try:
+        return _handle(message)
+    except Exception as exc:  # MCP boundary: convert failures to JSON-RPC errors.
+        _log(traceback.format_exc())
+        return _error(message.get("id"), -32603, str(exc))
 
 
 def main() -> int:
@@ -997,20 +1023,21 @@ def main() -> int:
     # renamed or deleted, so staying there (and passing it on to bridges and background jobs) blocks plugin updates.
     os.chdir(tempfile.gettempdir())  # exists even when a client passes no USERPROFILE
     while True:
-        message: dict[str, Any] | None = None
         try:
             message = _read_message(sys.stdin.buffer)
-            if message is None:
-                return 0
-            response = _handle(message)
-            if response is not None:
-                _write_message(response)
-        except json.JSONDecodeError as exc:
+        except (ValueError, RecursionError) as exc:  # bad JSON or UTF-8, nesting too deep, bad Content-Length
             _write_message(_error(None, -32700, "Parse error", str(exc)))
-        except Exception as exc:  # MCP boundary: convert failures to JSON-RPC errors.
-            _log(traceback.format_exc())
-            request_id = message.get("id") if isinstance(message, dict) else None
-            _write_message(_error(request_id, -32603, str(exc)))
+            continue
+        if message is _END_OF_INPUT:  # a JSON null is an invalid request, not the end of input
+            return 0
+        if isinstance(message, list) and message:  # JSON-RPC batch: a 2025-03-26 server MUST accept one
+            responses = [response for response in map(_dispatch, message) if response is not None]
+            if responses:
+                _write_message(responses)
+            continue
+        response = _dispatch(message)  # an empty batch is not an object: -32600
+        if response is not None:
+            _write_message(response)
 
 
 if __name__ == "__main__":
