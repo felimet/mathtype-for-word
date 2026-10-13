@@ -4,6 +4,38 @@ All notable changes to this project are recorded here. The format follows
 [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/). Each release also lists upgrade notes and known limitations.
 
+## [1.4.2] - 2026-10-14
+
+Codex and Claude Code install the plugin from this repository's marketplace, and the repository has a security
+policy.
+
+### Added
+
+- `.agents/plugins/marketplace.json` (Codex) and `.claude-plugin/marketplace.json` (Claude Code) list the
+  repository root as the `mathtype-for-word` plugin. `codex plugin marketplace add felimet/mathtype-for-word` or
+  `claude plugin marketplace add felimet/mathtype-for-word` followed by the client's install command installs it,
+  and the clients' update commands upgrade it. Before, the skill and the server had to be registered by hand, and
+  every upgrade meant doing that again.
+- `SECURITY.md` points reporters to GitHub private vulnerability reporting.
+- Dependabot proposes updates for the SHA-pinned GitHub Actions every week.
+
+### Removed
+
+- `requirements.txt`, which listed no packages. The server uses only the Python standard library; the READMEs now
+  say so.
+
+### Upgrade notes
+
+- Use the plugin or the hand registration, not both. Before installing the plugin, remove a hand-registered
+  server (`claude mcp remove mathtype-for-word -s user`, or the `[mcp_servers.mathtype-for-word]` entry in
+  `%USERPROFILE%\.codex\config.toml`) and the copied `mathtype-for-word` skill folder. In Codex a registered
+  server of the same name takes precedence over the plugin's server; Claude Code would load two servers and two
+  skills.
+- Claude Code names the plugin's tools `mcp__plugin_mathtype-for-word_mathtype-for-word__*` instead of
+  `mcp__mathtype-for-word__*`. Update permission rules or instructions that name the old tools.
+- Codex caches an installed plugin by version. To upgrade, run `codex plugin marketplace upgrade
+  mathtype-for-word` and then `codex plugin add mathtype-for-word@mathtype-for-word` again.
+
 ## [1.4.1] - 2026-10-14
 
 The plugin's MCP server starts under Codex, and the server negotiates the MCP protocol version instead of
@@ -266,6 +298,7 @@ DOCX and PowerPoint PPTX, with MathType-native equation numbers and references i
 - The prebuilt packages in `dist/` predate the last 1.3.0 changes (validation before publishing, temporary file
   cleanup, output naming in the skill). Install from the repository to get them.
 
+[1.4.2]: https://github.com/felimet/mathtype-for-word/releases/tag/v1.4.2
 [1.4.1]: https://github.com/felimet/mathtype-for-word/releases/tag/v1.4.1
 [1.4.0]: https://github.com/felimet/mathtype-for-word/releases/tag/v1.4.0
 [1.3.0]: https://github.com/felimet/mathtype-for-word/tree/6ab776f
