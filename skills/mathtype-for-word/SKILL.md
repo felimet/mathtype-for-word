@@ -36,7 +36,7 @@ Create real MathType equations in DOCX and PPTX, preserving MathType-native Word
 
 ## Shared output coordination
 
-- Resolve relative output paths against the user's current working directory. Do not default to the plugin repository or create a tool-named output subdirectory.
+- Resolve relative paths against the user's current working directory and pass every path to the tools as an absolute path; the tools refuse relative ones. Do not default to the plugin repository or create a tool-named output subdirectory.
 - Obey an explicit user-supplied input, output, or directory. Never reinterpret an explicit path, and never treat an input path as permission to overwrite it.
 - Operate as a complete standalone skill. Do not assume, require, install, or prompt for `endnote-for-word` merely to complete MathType work.
 - Prefix retained non-document artifacts with this skill name, for example `mathtype-for-word-manifest.json` or `mathtype-for-word-validation.json`.

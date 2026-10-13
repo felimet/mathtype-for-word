@@ -42,6 +42,10 @@ _BRIDGE_JOB: int | None = None
 POWERSHELL_INSTALL_WAIT_SECONDS = 45
 POWERSHELL_INSTALL_TIMEOUT_SECONDS = 20 * 60
 POWERSHELL_VARIABLE = "MATHTYPE_WORD_POWERSHELL"
+# Path arguments the tools take. The server works in the temp folder, whatever folder the client started it in, so a
+# relative path would land somewhere the user does not expect.
+PATH_ARGUMENTS = ("input_path", "document_path", "presentation_path", "output_path", "manifest_path",
+                  "validation_manifest_path", "candidates_path", "marks_path")
 _END_OF_INPUT = object()
 MAX_MESSAGE_BYTES = 64 * 1024 * 1024  # a Content-Length beyond this is a framing error, not a message
 POWERSHELL_INSTALL_FOLDER = r"%USERPROFILE%\.mathtype-for-word\PowerShell"  # ensure-pwsh.ps1's default InstallRoot
@@ -902,8 +906,11 @@ def _call_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     local = {"render_mathtype_word_document": _render_word, "get_mathtype_render_status": _render_status}
     if name not in local and name not in actions:
         raise ValueError(f"Unknown tool: {name}")
-    missing_powershell = None if name == "get_mathtype_render_status" else _ensure_powershell()
-    if missing_powershell is not None:
+    relative = [key for key in PATH_ARGUMENTS if arguments.get(key) and not Path(str(arguments[key])).is_absolute()]
+    missing_powershell = None if relative or name == "get_mathtype_render_status" else _ensure_powershell()
+    if relative:
+        result = {"ok": False, "error": f"Pass absolute paths (with a drive letter or UNC prefix): {', '.join(relative)}."}
+    elif missing_powershell is not None:
         result = missing_powershell
     elif name in local:
         try:

@@ -111,6 +111,20 @@ class McpProtocolTests(unittest.TestCase):
         self.assertEqual(bad_arguments["id"], 6)
         self.assertTrue(bad_arguments["result"]["isError"])  # 2025-11-25: input errors are tool execution errors
         self.assertIn("output_path", bad_arguments["result"]["structuredContent"]["error"])
+        relative = self.request(
+            {
+                "jsonrpc": "2.0",
+                "id": 7,
+                "method": "tools/call",
+                "params": {"name": "validate_mathtype_word_document",
+                           "arguments": {"document_path": "draft.docx", "manifest_path": r"C:\m.json"}},
+            }
+        )
+        self.assertTrue(relative["result"]["isError"])  # refused before PowerShell or Word is involved
+        error = relative["result"]["structuredContent"]["error"]
+        self.assertIn("absolute", error)
+        self.assertIn("document_path", error)
+        self.assertNotIn("manifest_path", error)
 
     def initialize(self, request_id: int, version: Any) -> str:
         params: dict[str, Any] = {"capabilities": {}, "clientInfo": {"name": "unit-test", "version": "1"}}
