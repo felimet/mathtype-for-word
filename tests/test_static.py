@@ -334,6 +334,8 @@ class StaticContractTests(unittest.TestCase):
     def test_plugin_packager_excludes_run_artifacts(self) -> None:
         text = (ROOT / "scripts" / "package_plugin.py").read_text(encoding="utf-8")
         self.assertIn('"mathtype-for-word-workspace"', text)
+        self.assertIn('".claude"', text)
+        self.assertIn('root / ".codex-mcp.json"', text)
         self.assertIn('("evals", "results")', text)
 
     def test_cleanup_removes_only_current_and_stale_owned_files(self) -> None:

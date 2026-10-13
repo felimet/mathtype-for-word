@@ -9,7 +9,10 @@ import zipfile
 from pathlib import Path
 
 
-EXCLUDED_DIRS = {".git", "__pycache__", ".pytest_cache", "dist", "mathtype-for-word-workspace"}
+# .claude holds local agent settings and worktrees, each a full copy of the repository.
+EXCLUDED_DIRS = {".git", ".claude", "__pycache__", ".pytest_cache", "dist", "mathtype-for-word-workspace"}
+# Fixed, not the checkout folder name: a worktree or an export folder may be named anything.
+ARCHIVE_ROOT = Path("mathtype-for-word")
 EXCLUDED_SUFFIXES = {".pyc", ".pyo"}
 
 
@@ -27,6 +30,7 @@ def package(root: Path, output: Path) -> str:
         root / ".codex-plugin" / "plugin.json",
         root / ".claude-plugin" / "plugin.json",
         root / ".mcp.json",
+        root / ".codex-mcp.json",
         root / "skills" / "mathtype-for-word" / "SKILL.md",
     ]
     missing = [str(path) for path in required if not path.is_file()]
@@ -36,7 +40,7 @@ def package(root: Path, output: Path) -> str:
     with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
         for path in sorted(root.rglob("*")):
             if path.is_file() and should_include(path, root) and path.resolve() != output:
-                archive.write(path, Path(root.name) / path.relative_to(root))
+                archive.write(path, ARCHIVE_ROOT / path.relative_to(root))
     digest = hashlib.sha256(output.read_bytes()).hexdigest()
     output.with_suffix(output.suffix + ".sha256").write_text(
         f"{digest}  {output.name}\n", encoding="ascii"
