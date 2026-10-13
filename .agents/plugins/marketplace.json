@@ -1,0 +1,20 @@
+{
+  "name": "mathtype-for-word",
+  "interface": {
+    "displayName": "MathType for Word and PowerPoint"
+  },
+  "plugins": [
+    {
+      "name": "mathtype-for-word",
+      "source": {
+        "source": "local",
+        "path": "./"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

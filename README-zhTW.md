@@ -83,7 +83,16 @@ powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File 
 
 ### Codex
 
-將 `skills/mathtype-for-word` 複製至 `%USERPROFILE%\.codex\skills\mathtype-for-word` 或 `%USERPROFILE%\.agents\skills\mathtype-for-word`，再註冊 MCP server：
+從本 repository 的 marketplace 安裝 plugin。Plugin 內含 skill 與 MCP server，從安裝資料夾啟動 server，設定 1200 秒工具上限，並轉送 `MATHTYPE_*` 設定：
+
+```console
+codex plugin marketplace add felimet/mathtype-for-word
+codex plugin add mathtype-for-word@mathtype-for-word
+```
+
+升級時執行 `codex plugin marketplace upgrade mathtype-for-word`，再執行一次 `codex plugin add`。安裝或升級後重新啟動 Codex。
+
+若要改為手動註冊，將 `skills/mathtype-for-word` 複製至 `%USERPROFILE%\.codex\skills\mathtype-for-word` 或 `%USERPROFILE%\.agents\skills\mathtype-for-word`，再註冊 MCP server：
 
 ```console
 codex mcp add mathtype-for-word -- python "<REPO_ROOT>\scripts\mcp_server.py"
@@ -99,18 +108,27 @@ tool_timeout_sec = 1200
 
 Codex 只把固定一組環境變數傳給 MCP server。若要調整 `MATHTYPE_OFFICE_TIMEOUT_SECONDS` 或其他 `MATHTYPE_*` 設定，請在同一項目的 `env_vars` 列出變數名稱。
 
-Release 亦包含 `.codex-plugin/plugin.json` 與 `dist/mathtype-for-word-plugin.zip`，供支援 plugin 的部署流程使用。Plugin 已自行設定逾時，並轉送 `MATHTYPE_WORD_POWERSHELL`、`MATHTYPE_OFFICE_TIMEOUT_SECONDS`（或其 1.3.0 名稱 `MATHTYPE_WORD_TIMEOUT_SECONDS`）與 `MATHTYPE_BRIDGE_LOCK_WAIT_SECONDS`。以 `codex mcp add` 註冊的同名 server 優先於 plugin 內的 server。
+Plugin 與手動註冊擇一使用：以 `codex mcp add` 註冊的同名 server 優先於 plugin 內的 server。Plugin 會轉送 `MATHTYPE_WORD_POWERSHELL`、`MATHTYPE_OFFICE_TIMEOUT_SECONDS`（或其 1.3.0 名稱 `MATHTYPE_WORD_TIMEOUT_SECONDS`）與 `MATHTYPE_BRIDGE_LOCK_WAIT_SECONDS`。
 
 ### Claude Code
 
-將 `skills/mathtype-for-word` 複製至 `%USERPROFILE%\.claude\skills\mathtype-for-word`，再註冊 MCP server：
+從本 repository 的 marketplace 安裝 plugin：
+
+```console
+claude plugin marketplace add felimet/mathtype-for-word
+claude plugin install mathtype-for-word@mathtype-for-word
+```
+
+升級時執行 `claude plugin marketplace update mathtype-for-word` 與 `claude plugin update mathtype-for-word@mathtype-for-word`。
+
+若要改為手動註冊，將 `skills/mathtype-for-word` 複製至 `%USERPROFILE%\.claude\skills\mathtype-for-word`，再註冊 MCP server：
 
 ```console
 claude mcp add --scope user mathtype-for-word -- python "<REPO_ROOT>\scripts\mcp_server.py"
 claude mcp get mathtype-for-word
 ```
 
-Release 亦包含 `.claude-plugin/plugin.json`、`.mcp.json` 與合併 plugin 套件。安裝後重新啟動 Claude Code。
+Plugin 與手動註冊擇一使用，否則 Claude Code 會載入兩個 server 與兩份 skill。安裝或升級後重新啟動 Claude Code。
 
 ### Claude Desktop
 
