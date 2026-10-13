@@ -1,6 +1,6 @@
 {
   "name": "mathtype-for-word",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "Create and validate native MathType equations in Word and PowerPoint, including Word-native equation numbers and references.",
   "author": {
     "name": "Jia-Ming Zhou (Felimet)"
@@ -18,7 +18,7 @@
     "chatgpt"
   ],
   "skills": "./skills/",
-  "mcpServers": "./.mcp.json",
+  "mcpServers": "./.codex-mcp.json",
   "interface": {
     "displayName": "MathType for Word and PowerPoint",
     "shortDescription": "Native MathType equations in Word and PowerPoint.",
@@ -32,8 +32,7 @@
     "defaultPrompt": [
       "Replace Word markers with native MathType equations.",
       "Add MathType-native equation numbers and references.",
-      "Replace PowerPoint markers with editable centered MathType equations.",
-      "Validate MathType equations in this Word or PowerPoint file."
+      "Replace PowerPoint markers with editable centered MathType equations."
     ],
     "brandColor": "#0078D4"
   }

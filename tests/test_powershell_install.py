@@ -420,6 +420,14 @@ class ServerInstallTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "offline.*--installer-type wix"):
                 mcp_server._powershell_executable()
 
+    def test_relative_path_is_refused_before_any_install_or_bridge(self) -> None:
+        with mock.patch.object(mcp_server, "_run_ensure_powershell") as ensure:  # PowerShell 7 is missing here
+            refused = self.call("validate_mathtype_word_document", {"document_path": "draft.docx"})
+        self.assertTrue(refused["isError"])
+        self.assertIn("document_path", refused["structuredContent"]["error"])
+        ensure.assert_not_called()
+        mcp_server._invoke_bridge.assert_not_called()
+
     def test_powershell_that_cannot_start_is_a_tool_result(self) -> None:
         self.bridge.stop()
         self.patches.remove(self.bridge)

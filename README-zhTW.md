@@ -90,7 +90,16 @@ codex mcp add mathtype-for-word -- python "<REPO_ROOT>\scripts\mcp_server.py"
 codex mcp get mathtype-for-word
 ```
 
-Release 亦包含 `.codex-plugin/plugin.json` 與 `dist/mathtype-for-word-plugin.zip`，供支援 plugin 的部署流程使用。
+Codex 預設在 300 秒後結束一次工具呼叫，渲染中的單一 Word session 可能更久。請在 `%USERPROFILE%\.codex\config.toml` 的該 server 項目加上與 plugin 相同的上限；需要多個 session 的 manifest 仍應在背景執行（`background: true`）：
+
+```toml
+[mcp_servers.mathtype-for-word]
+tool_timeout_sec = 1200
+```
+
+Codex 只把固定一組環境變數傳給 MCP server。若要調整 `MATHTYPE_OFFICE_TIMEOUT_SECONDS` 或其他 `MATHTYPE_*` 設定，請在同一項目的 `env_vars` 列出變數名稱。
+
+Release 亦包含 `.codex-plugin/plugin.json` 與 `dist/mathtype-for-word-plugin.zip`，供支援 plugin 的部署流程使用。Plugin 已自行設定逾時，並轉送 `MATHTYPE_WORD_POWERSHELL`、`MATHTYPE_OFFICE_TIMEOUT_SECONDS`（或其 1.3.0 名稱 `MATHTYPE_WORD_TIMEOUT_SECONDS`）與 `MATHTYPE_BRIDGE_LOCK_WAIT_SECONDS`。以 `codex mcp add` 註冊的同名 server 優先於 plugin 內的 server。
 
 ### Claude Code
 

@@ -3,7 +3,15 @@
     "mathtype-for-word": {
       "command": "python",
       "args": [
-        "${PLUGIN_ROOT}/scripts/mcp_server.py"
+        "scripts/mcp_server.py"
+      ],
+      "cwd": ".",
+      "tool_timeout_sec": 1200,
+      "env_vars": [
+        "MATHTYPE_WORD_POWERSHELL",
+        "MATHTYPE_OFFICE_TIMEOUT_SECONDS",
+        "MATHTYPE_WORD_TIMEOUT_SECONDS",
+        "MATHTYPE_BRIDGE_LOCK_WAIT_SECONDS"
       ]
     }
   }

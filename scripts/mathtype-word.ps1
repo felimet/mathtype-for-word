@@ -1445,7 +1445,7 @@ function Invoke-Probe {
     }
     else { $null }
     $checks = [ordered]@{
-        windows                    = $env:OS -eq 'Windows_NT'
+        windows                    = $IsWindows # Codex starts MCP servers without the OS environment variable
         powershell                 = $PSVersionTable.PSVersion.ToString()
         mathtype_executable        = Test-Path -LiteralPath $mathTypeExe
         mathtype_executable_path   = $mathTypeExe

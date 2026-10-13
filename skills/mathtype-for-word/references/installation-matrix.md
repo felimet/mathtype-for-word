@@ -50,7 +50,16 @@ codex mcp add mathtype-for-word -- python "<REPO_ROOT>\scripts\mcp_server.py"
 codex mcp get mathtype-for-word
 ```
 
-The distribution also includes `.codex-plugin/plugin.json`, `.codex-mcp.json`, and `dist/mathtype-for-word-plugin.zip` for plugin-aware deployment workflows. Restart Codex after changing installed skills or plugins.
+Codex ends a tool call after 300 s by default, and one Word session of a render can run longer. Add the limit the plugin itself sets to the server's entry in `%USERPROFILE%\.codex\config.toml`; a manifest that needs several sessions still belongs in the background (`background: true`):
+
+```toml
+[mcp_servers.mathtype-for-word]
+tool_timeout_sec = 1200
+```
+
+Codex passes MCP servers only a fixed set of environment variables. To change `MATHTYPE_OFFICE_TIMEOUT_SECONDS` or another `MATHTYPE_*` setting, list it in `env_vars` in the same entry.
+
+The distribution also includes `.codex-plugin/plugin.json`, `.codex-mcp.json`, and `dist/mathtype-for-word-plugin.zip` for plugin-aware deployment workflows. The plugin starts the server from its installed folder, sets `tool_timeout_sec = 1200` and forwards `MATHTYPE_WORD_POWERSHELL`, `MATHTYPE_OFFICE_TIMEOUT_SECONDS` (or its 1.3.0 name `MATHTYPE_WORD_TIMEOUT_SECONDS`) and `MATHTYPE_BRIDGE_LOCK_WAIT_SECONDS`. A server registered with `codex mcp add` under the same name takes precedence over the plugin's server. Restart Codex after changing installed skills or plugins.
 
 ## Claude Code
 

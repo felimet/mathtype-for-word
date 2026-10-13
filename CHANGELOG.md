@@ -4,6 +4,64 @@ All notable changes to this project are recorded here. The format follows
 [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/). Each release also lists upgrade notes and known limitations.
 
+## [1.4.1] - 2026-10-14
+
+The plugin's MCP server starts under Codex, and the server negotiates the MCP protocol version instead of
+echoing whatever the client asks for.
+
+### Fixed
+
+- Codex could not start the plugin's MCP server. Its manifest pointed at `.mcp.json`, whose launcher finds the
+  plugin through `CLAUDE_PLUGIN_ROOT`, which Codex neither sets nor forwards, so Python looked for
+  `scripts\mcp_server.py` in the folder where the Codex session started. `.codex-mcp.json` used
+  `${PLUGIN_ROOT}`, which Codex does not expand. The manifest now points at `.codex-mcp.json`, which runs
+  `python scripts/mcp_server.py` with `"cwd": "."`; Codex resolves that against the installed plugin folder.
+  Claude Code still uses `.mcp.json` unchanged.
+- Under Codex, `probe_mathtype_word` and `probe_mathtype_powerpoint` reported `windows: false` and Office not
+  ready, because Codex starts MCP servers without the `OS` environment variable. The bridge now uses `$IsWindows`.
+- Codex ends tool calls after 300 s by default, shorter than one Word session of a render can take. The plugin
+  sets `tool_timeout_sec` to 1200, above the watchdog of one session at the default `batch_size` (440 s plus 1 s
+  per equation already in the document), so in documents of up to about 750 equations a hung session ends with
+  the server's own timeout and Office cleanup report. A foreground render runs all its sessions in one tool call
+  and can still outlast 1200 s; the skill and the tool description now say to pass `background: true` whenever
+  equations plus references exceed `batch_size`.
+- Codex forwarded none of the `MATHTYPE_*` settings to the server. The plugin now forwards
+  `MATHTYPE_WORD_POWERSHELL`, `MATHTYPE_OFFICE_TIMEOUT_SECONDS`, its 1.3.0 name `MATHTYPE_WORD_TIMEOUT_SECONDS`, and
+  `MATHTYPE_BRIDGE_LOCK_WAIT_SECONDS`.
+- The server now leaves the folder it was started in. Under Codex that is the plugin's install folder, which
+  Windows cannot rename or delete while a process (the server, a bridge or a background render job) works in it.
+- Codex dropped the fourth `defaultPrompt` and warned on every load; the manifest now lists three.
+- `initialize` echoed any requested protocol version, including ones the server does not implement. It now
+  answers with the requested version when it is `2025-11-25`, `2025-06-18`, `2025-03-26` or `2024-11-05`, and
+  with `2025-11-25` otherwise, so the client can decide whether to continue.
+- A JSON-RPC batch (an array of requests), which `2025-03-26` servers must accept, was answered with an internal
+  error. Each request in it is now answered in one array; an empty batch is an invalid request.
+- A call to an unknown tool returned internal error `-32603`; it now returns `-32602` (invalid params), as the
+  tools specification asks. Bad arguments to `render_mathtype_word_document` and `get_mathtype_render_status`
+  also returned `-32603`; they now return a tool result with `isError: true`, which the model can act on.
+- A message consisting of JSON `null` stopped the server as if its input had ended. A negative `Content-Length`
+  made the server wait for the end of its input.
+- A request without an `id` (a notification) for `ping`, `tools/list` or `tools/call` ran and was answered with
+  `id: null`. Notifications now get no reply and run nothing.
+- `scripts/package_plugin.py` named the archive's top folder after the checkout folder, packaged `.claude` (local
+  agent settings and worktrees), and did not require `.codex-mcp.json`.
+
+### Changed
+
+- Every tool refuses a relative path in `input_path`, `document_path`, `presentation_path`, `output_path`,
+  `manifest_path`, `validation_manifest_path`, `candidates_path` or `marks_path`, before PowerShell or Office is
+  involved. A relative path was resolved against whatever folder the client started the server in (Claude Code:
+  usually the project; Codex: the plugin's install folder), and the server now works in the temp folder.
+
+### Upgrade notes
+
+- Agents must pass absolute paths. The skill already tells the agent to resolve relative paths against the
+  user's working directory.
+- A Codex server registered by hand with `codex mcp add` keeps Codex's 300 s tool limit. Add
+  `tool_timeout_sec = 1200` to `[mcp_servers.mathtype-for-word]` in `%USERPROFILE%\.codex\config.toml`, as the
+  README shows. Such an entry also takes precedence over the plugin's server of the same name.
+- Codex caches an installed plugin by version; reinstall or update the plugin to get 1.4.1.
+
 ## [1.4.0] - 2026-10-13
 
 Large Word documents render in resumable batches, optionally as background jobs. New tools turn plain-text
@@ -208,5 +266,6 @@ DOCX and PowerPoint PPTX, with MathType-native equation numbers and references i
 - The prebuilt packages in `dist/` predate the last 1.3.0 changes (validation before publishing, temporary file
   cleanup, output naming in the skill). Install from the repository to get them.
 
+[1.4.1]: https://github.com/felimet/mathtype-for-word/releases/tag/v1.4.1
 [1.4.0]: https://github.com/felimet/mathtype-for-word/releases/tag/v1.4.0
 [1.3.0]: https://github.com/felimet/mathtype-for-word/tree/6ab776f

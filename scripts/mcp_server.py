@@ -9,6 +9,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import traceback
 import uuid
@@ -17,10 +18,12 @@ from typing import Any, BinaryIO
 
 
 SERVER_NAME = "mathtype-for-word"
-SERVER_VERSION = "1.4.0"
-SCRIPT_PATH = Path(__file__).with_name("mathtype-word.ps1")
-ENSURE_POWERSHELL_PATH = Path(__file__).with_name("ensure-pwsh.ps1")
-DEFAULT_PROTOCOL_VERSION = "2025-06-18"
+SERVER_VERSION = "1.4.1"
+# Absolute: main() leaves the folder the server was started in.
+SCRIPT_PATH = Path(__file__).resolve().with_name("mathtype-word.ps1")
+ENSURE_POWERSHELL_PATH = SCRIPT_PATH.with_name("ensure-pwsh.ps1")
+# initialize-era MCP revisions this server implements, newest first. 2026-07-28 is absent on purpose.
+SUPPORTED_PROTOCOL_VERSIONS = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05")
 WORD_COMMANDS_KEY = r"Software\Design Science\DSMT7\WordCommands"
 # Same names and paths as $script:WarningPreferenceNames, $script:WarningJournalPath and the bridge mutex.
 WARNING_PREFERENCE_NAMES = ("NoEqnNumWarningDlg", "NoInsertEqnRefDlg", "NoSlowUpdateEqnDlg")
@@ -34,11 +37,17 @@ WAIT_ABANDONED = 0x80
 JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
 JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
 _BRIDGE_JOB: int | None = None
-# One tool call waits this long for a PowerShell 7 install, then reports it as running: Codex ends a tool call
-# after 60 s by default. The installer itself may take this long on a slow connection.
+# One tool call waits this long for a PowerShell 7 install, then reports it as running, well inside Codex's 300 s
+# default tool-call limit. The installer itself may take this long on a slow connection.
 POWERSHELL_INSTALL_WAIT_SECONDS = 45
 POWERSHELL_INSTALL_TIMEOUT_SECONDS = 20 * 60
 POWERSHELL_VARIABLE = "MATHTYPE_WORD_POWERSHELL"
+# Path arguments the tools take. The server works in the temp folder, whatever folder the client started it in, so a
+# relative path would land somewhere the user does not expect.
+PATH_ARGUMENTS = ("input_path", "document_path", "presentation_path", "output_path", "manifest_path",
+                  "validation_manifest_path", "candidates_path", "marks_path")
+_END_OF_INPUT = object()
+MAX_MESSAGE_BYTES = 64 * 1024 * 1024  # a Content-Length beyond this is a framing error, not a message
 POWERSHELL_INSTALL_FOLDER = r"%USERPROFILE%\.mathtype-for-word\PowerShell"  # ensure-pwsh.ps1's default InstallRoot
 MANUAL_POWERSHELL_INSTALL = "winget install --id Microsoft.PowerShell --source winget --installer-type wix"
 _powershell_install: dict[str, Any] = {"thread": None, "result": None, "notice": None}
@@ -130,7 +139,8 @@ TOOLS: list[dict[str, Any]] = [
                     "default": False,
                     "description": (
                         "Start a detached job and return at once; poll get_mathtype_render_status. "
-                        "Use it when the render may outlast the client's tool-call time limit."
+                        "Use it when equations plus references exceed batch_size: a foreground render runs "
+                        "every Word session in one tool call, which can outlast the client's time limit."
                     ),
                 },
                 "partial_manifest": {
@@ -896,11 +906,18 @@ def _call_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     local = {"render_mathtype_word_document": _render_word, "get_mathtype_render_status": _render_status}
     if name not in local and name not in actions:
         raise ValueError(f"Unknown tool: {name}")
-    missing_powershell = None if name == "get_mathtype_render_status" else _ensure_powershell()
-    if missing_powershell is not None:
+    relative = [key for key in PATH_ARGUMENTS if arguments.get(key) and not Path(str(arguments[key])).is_absolute()]
+    missing_powershell = None if relative or name == "get_mathtype_render_status" else _ensure_powershell()
+    if relative:
+        result = {"ok": False, "error": f"Pass absolute paths (with a drive letter or UNC prefix): {', '.join(relative)}."}
+    elif missing_powershell is not None:
         result = missing_powershell
     elif name in local:
-        result = local[name](arguments)
+        try:
+            result = local[name](arguments)
+        except (KeyError, TypeError, ValueError) as exc:  # bad arguments or a local failure: a tool error, not a protocol one
+            _log(traceback.format_exc())
+            result = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
     else:
         result = _refuse_during_render_job(actions[name]) or _invoke_bridge(actions[name], arguments)
     if _powershell_install["notice"]:
@@ -914,16 +931,18 @@ def _call_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _read_message(stream: BinaryIO) -> dict[str, Any] | None:
+def _read_message(stream: BinaryIO) -> Any:
     line = stream.readline()
     if not line:
-        return None
+        return _END_OF_INPUT
     while line in (b"\r\n", b"\n"):
         line = stream.readline()
         if not line:
-            return None
+            return _END_OF_INPUT
     if line.lower().startswith(b"content-length:"):
         length = int(line.split(b":", 1)[1].strip())
+        if not 0 <= length <= MAX_MESSAGE_BYTES:  # read(-1) would wait for the end of input
+            raise ValueError(f"Content-Length {length} is outside 0..{MAX_MESSAGE_BYTES}")
         while True:
             header = stream.readline()
             if header in (b"\r\n", b"\n", b""):
@@ -933,7 +952,7 @@ def _read_message(stream: BinaryIO) -> dict[str, Any] | None:
     return json.loads(line.decode("utf-8"))
 
 
-def _write_message(message: dict[str, Any]) -> None:
+def _write_message(message: dict[str, Any] | list[dict[str, Any]]) -> None:
     # ASCII escapes keep the wire format independent of the stdout code page (cp950, cp1252, ...).
     data = json.dumps(message, separators=(",", ":"))
     sys.stdout.write(data + "\n")
@@ -958,18 +977,19 @@ def _handle(message: dict[str, Any]) -> dict[str, Any] | None:
     if method in ("notifications/initialized", "notifications/cancelled"):
         return None
     if method == "initialize":
-        requested = params.get("protocolVersion") or DEFAULT_PROTOCOL_VERSION
+        requested = params.get("protocolVersion")
+        version = requested if requested in SUPPORTED_PROTOCOL_VERSIONS else SUPPORTED_PROTOCOL_VERSIONS[0]
         return _success(
             request_id,
             {
-                "protocolVersion": requested,
+                "protocolVersion": version,
                 "capabilities": {"tools": {"listChanged": False}},
                 "serverInfo": {"name": SERVER_NAME, "version": SERVER_VERSION},
                 "instructions": (
                     "Use the matching Word or PowerPoint probe first. Preserve the source, render from a "
                     "schema v1 manifest, then validate. Large manifests render in resumable batches; use "
-                    "background=true with get_mathtype_render_status when a render may outlast the tool-call "
-                    "time limit. DOCX numbering and references must remain MathType-native fields. PPTX "
+                    "background=true with get_mathtype_render_status when equations plus references exceed "
+                    "batch_size. DOCX numbering and references must remain MathType-native fields. PPTX "
                     "equations are editable floating Equation.DSMT4 OLE objects. When a result has a notice, "
                     "tell the user its text."
                 ),
@@ -980,31 +1000,51 @@ def _handle(message: dict[str, Any]) -> dict[str, Any] | None:
     if method == "tools/list":
         return _success(request_id, {"tools": TOOLS})
     if method == "tools/call":
-        return _success(request_id, _call_tool(str(params.get("name", "")), params.get("arguments") or {}))
+        name = str(params.get("name", ""))
+        if not any(tool["name"] == name for tool in TOOLS):
+            return _error(request_id, -32602, f"Unknown tool: {name}")
+        return _success(request_id, _call_tool(name, params.get("arguments") or {}))
     if request_id is None:
         return None
     return _error(request_id, -32601, f"Method not found: {method}")
+
+
+def _dispatch(message: Any) -> dict[str, Any] | None:
+    """One JSON-RPC message in, its response out (None for a notification); never raises."""
+    if not isinstance(message, dict):
+        return _error(None, -32600, "Invalid Request")
+    if "id" not in message:  # a notification is never answered, and none the server knows asks it to act
+        return None
+    try:
+        return _handle(message)
+    except Exception as exc:  # MCP boundary: convert failures to JSON-RPC errors.
+        _log(traceback.format_exc())
+        return _error(message.get("id"), -32603, str(exc))
 
 
 def main() -> int:
     # Windows starts Python with the ANSI code page on pipes; CJK paths in logs must not raise or garble.
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     _log(f"starting {SERVER_VERSION}")
+    # Codex starts the server in the plugin's install folder. On Windows a process's working folder cannot be
+    # renamed or deleted, so staying there (and passing it on to bridges and background jobs) blocks plugin updates.
+    os.chdir(tempfile.gettempdir())  # exists even when a client passes no USERPROFILE
     while True:
-        message: dict[str, Any] | None = None
         try:
             message = _read_message(sys.stdin.buffer)
-            if message is None:
-                return 0
-            response = _handle(message)
-            if response is not None:
-                _write_message(response)
-        except json.JSONDecodeError as exc:
+        except (ValueError, RecursionError) as exc:  # bad JSON or UTF-8, nesting too deep, bad Content-Length
             _write_message(_error(None, -32700, "Parse error", str(exc)))
-        except Exception as exc:  # MCP boundary: convert failures to JSON-RPC errors.
-            _log(traceback.format_exc())
-            request_id = message.get("id") if isinstance(message, dict) else None
-            _write_message(_error(request_id, -32603, str(exc)))
+            continue
+        if message is _END_OF_INPUT:  # a JSON null is an invalid request, not the end of input
+            return 0
+        if isinstance(message, list) and message:  # JSON-RPC batch: a 2025-03-26 server MUST accept one
+            responses = [response for response in map(_dispatch, message) if response is not None]
+            if responses:
+                _write_message(responses)
+            continue
+        response = _dispatch(message)  # an empty batch is not an object: -32600
+        if response is not None:
+            _write_message(response)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,46 @@
 # Test report
 
+## 1.4.1
+
+Date: 2026-10-14
+
+Host: Windows 11, Word 16.0, MathType 7.11.1.462, PowerShell 7.6.6, Python 3.13.14, codex-cli 0.162.1 (npm) and
+0.144.1 (bundled with the Codex desktop app), Claude Code 2.1.296
+
+### Validators
+
+| Validator | Result |
+|---|---|
+| Codex `skill-creator/scripts/quick_validate.py` | PASS |
+| Claude official `skill-creator/scripts/quick_validate.py` | PASS |
+| `claude plugin validate .` | PASS |
+
+### Office-free suite
+
+`pwsh.exe -NoProfile -ExecutionPolicy Bypass -File tests\run-tests.ps1`: 103 Python tests passed, 1 skipped (live
+MCP calls), and every PowerShell file parsed; it also passes with `TEMP` set to an 8.3 short path. New coverage:
+protocol version negotiation, JSON-RPC batches, notifications that get no reply and run nothing, a JSON `null`
+message, unreadable messages (nesting 20000 levels deep, a negative or huge `Content-Length`) followed by a ping
+that is still answered, `-32602` for an unknown tool, bad arguments as `isError` results, relative paths refused
+before any PowerShell install or bridge call, and a server whose start folder can be renamed while it runs. Each
+of these tests fails when its fix is reverted.
+
+### Codex
+
+Each run used an isolated `CODEX_HOME` and a scratch marketplace holding the 1.4.1 tree; the user's
+`%USERPROFILE%\.codex` was not touched. `codex plugin add` installed the plugin, and `codex mcp get` showed
+`python scripts/mcp_server.py`, the plugin cache folder as `cwd`, `tool_timeout_sec` 1200 and the forwarded
+`env_vars`. Through `codex app-server`, with no model call, under both 0.162.1 and 0.144.1, started from an
+unrelated session folder:
+
+- `mcpServerStatus/list`: server 1.4.1, 11 tools, no error, and no `defaultPrompt` warning;
+- `mcpServer/tool/call` of `probe_mathtype_word`: `windows: true`, Word ready, no Word process left behind;
+- a relative `document_path`: an `isError` result naming it;
+- `MATHTYPE_WORD_POWERSHELL` set in Codex's environment reached the server (its log reported ignoring the
+  missing program the variable named).
+
+With 1.4.0 the same setup listed no tools: Python looked for `scripts\mcp_server.py` in the session folder.
+
 ## 1.4.0
 
 Date: 2026-10-13
