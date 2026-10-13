@@ -36,7 +36,16 @@ Set `<REPO_ROOT>` to the absolute path of the checked-out repository before usin
 
 ## Codex
 
-Copy `skills/mathtype-for-word` to either supported skill root:
+Install the plugin from the repository's marketplace; it carries the skill and the MCP server:
+
+```console
+codex plugin marketplace add felimet/mathtype-for-word
+codex plugin add mathtype-for-word@mathtype-for-word
+```
+
+To upgrade, run `codex plugin marketplace upgrade mathtype-for-word` and then `codex plugin add` again.
+
+To register the parts by hand instead, copy `skills/mathtype-for-word` to either supported skill root:
 
 ```console
 %USERPROFILE%\.codex\skills\mathtype-for-word
@@ -59,11 +68,20 @@ tool_timeout_sec = 1200
 
 Codex passes MCP servers only a fixed set of environment variables. To change `MATHTYPE_OFFICE_TIMEOUT_SECONDS` or another `MATHTYPE_*` setting, list it in `env_vars` in the same entry.
 
-The distribution also includes `.codex-plugin/plugin.json`, `.codex-mcp.json`, and `dist/mathtype-for-word-plugin.zip` for plugin-aware deployment workflows. The plugin starts the server from its installed folder, sets `tool_timeout_sec = 1200` and forwards `MATHTYPE_WORD_POWERSHELL`, `MATHTYPE_OFFICE_TIMEOUT_SECONDS` (or its 1.3.0 name `MATHTYPE_WORD_TIMEOUT_SECONDS`) and `MATHTYPE_BRIDGE_LOCK_WAIT_SECONDS`. A server registered with `codex mcp add` under the same name takes precedence over the plugin's server. Restart Codex after changing installed skills or plugins.
+The plugin starts the server from its installed folder, sets `tool_timeout_sec = 1200` and forwards `MATHTYPE_WORD_POWERSHELL`, `MATHTYPE_OFFICE_TIMEOUT_SECONDS` (or its 1.3.0 name `MATHTYPE_WORD_TIMEOUT_SECONDS`) and `MATHTYPE_BRIDGE_LOCK_WAIT_SECONDS`. Use the plugin or the hand registration, not both: a server registered with `codex mcp add` under the same name takes precedence over the plugin's server. Restart Codex after changing installed skills or plugins.
 
 ## Claude Code
 
-Copy the skill to:
+Install the plugin from the repository's marketplace:
+
+```console
+claude plugin marketplace add felimet/mathtype-for-word
+claude plugin install mathtype-for-word@mathtype-for-word
+```
+
+To upgrade, run `claude plugin marketplace update mathtype-for-word` and `claude plugin update mathtype-for-word@mathtype-for-word`.
+
+To register the parts by hand instead, copy the skill to:
 
 ```console
 %USERPROFILE%\.claude\skills\mathtype-for-word
@@ -76,7 +94,7 @@ claude mcp add --scope user mathtype-for-word -- python "<REPO_ROOT>\scripts\mcp
 claude mcp get mathtype-for-word
 ```
 
-The distribution includes `.claude-plugin/plugin.json`, `.mcp.json`, and `dist/mathtype-for-word-plugin.zip` for a managed Claude Code plugin deployment. A local folder is not a marketplace entry, so the portable skill plus explicit `claude mcp add` command is the deterministic installation path. Restart Claude Code after installation.
+Use the plugin or the hand registration, not both, or Claude Code loads two servers and two skills. Restart Claude Code after installing or upgrading.
 
 ## Claude Desktop
 

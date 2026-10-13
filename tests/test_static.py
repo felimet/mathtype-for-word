@@ -75,6 +75,20 @@ class StaticContractTests(unittest.TestCase):
         self.assertFalse(numbering["warn_when_inserting_equation_references"])
         self.assertTrue(numbering["use_as_default_for_new_documents"])
 
+    def test_marketplaces_offer_this_plugin(self) -> None:
+        # Both clients install the repository root as the plugin; a rename or a moved root breaks every install.
+        def load(*parts: str) -> dict:
+            return json.loads(ROOT.joinpath(*parts).read_text(encoding="utf-8"))
+
+        name = load(".claude-plugin", "plugin.json")["name"]
+        self.assertEqual(load(".codex-plugin", "plugin.json")["name"], name)
+        claude = load(".claude-plugin", "marketplace.json")
+        codex = load(".agents", "plugins", "marketplace.json")
+        self.assertEqual([(plugin["name"], plugin["source"]) for plugin in claude["plugins"]], [(name, "./")])
+        self.assertEqual([(plugin["name"], plugin["source"]) for plugin in codex["plugins"]],
+                         [(name, {"source": "local", "path": "./"})])
+        self.assertEqual((claude["name"], codex["name"]), (name, name))  # the @marketplace in the docs
+
     def test_platform_specific_plugin_launch(self) -> None:
         # Claude Code substitutes and exports CLAUDE_PLUGIN_ROOT. Codex expands no ${PLUGIN_ROOT} in a .codex-plugin
         # manifest's server file and starts the server in the session folder unless cwd is set; it resolves a relative
@@ -312,7 +326,7 @@ class StaticContractTests(unittest.TestCase):
                     self.assertTrue(same(skill.read(f"mathtype-for-word/{name}"), path))
 
     def test_release_versions_are_aligned(self) -> None:
-        expected = "1.4.1"
+        expected = "1.4.2"
         expected_author = "Jia-Ming Zhou (Felimet)"
         for path in (
             ROOT / ".claude-plugin" / "plugin.json",

@@ -51,7 +51,7 @@ pwsh.exe -NoProfile -ExecutionPolicy Bypass -File scripts/mathtype-word.ps1 -Act
 
 ### PowerShell 7
 
-MCP server 是 Python 程式，啟動時不需要 PowerShell 7：plugin 的啟動命令在每台受支援 Windows 皆內建的 Windows PowerShell 5.1（`powershell.exe`）下執行，上方的手動註冊則直接啟動 `python`。bridge 在 PowerShell 7 中執行。系統沒有 PowerShell 7 時，第一個需要它的工具呼叫會為目前使用者安裝 PowerShell 7.6.6（LTS），並告知安裝內容：
+MCP server 是 Python 程式，啟動時不需要 PowerShell 7：Claude Code plugin 的啟動命令在每台受支援 Windows 皆內建的 Windows PowerShell 5.1（`powershell.exe`）下執行，Codex plugin 與下方的手動註冊則直接啟動 `python`。bridge 在 PowerShell 7 中執行。系統沒有 PowerShell 7 時，第一個需要它的工具呼叫會為目前使用者安裝 PowerShell 7.6.6（LTS），並告知安裝內容：
 
 - 來源為 GitHub 上官方的 PowerShell ZIP 發行檔；SHA-256 必須與 `scripts/ensure-pwsh.ps1` 內固定的雜湊一致，且 `pwsh.exe` 必須具有效的 Microsoft 簽章，否則拒絕安裝。
 - 安裝至 `%USERPROFILE%\.mathtype-for-word\PowerShell\<version>`。不需系統管理員權限、不跳出提示，也不修改 PATH 或登錄；僅供本 plugin 使用，刪除該資料夾即移除。此副本只隨本 plugin 的新版本更新。
@@ -70,7 +70,7 @@ powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File 
 若要在 Claude Code、Claude Desktop、Codex 或 ChatGPT Desktop 使用本工具，貼上以下 prompt，Agent 會依目前環境完成設定：
 
 ```text
-從 https://github.com/felimet/mathtype-for-word 安裝或升級 MathType for Word and PowerPoint toolkit。偵測我目前可用的終端機，並使用 PowerShell 7、Windows 上的 Bash，包括 Git Bash，或 CMD。不可在 Windows PowerShell 5.1 執行 Office bridge；若目前為 5.1，切換至 Git Bash 或 CMD，再呼叫 Windows pwsh.exe。從 WSL Bash 執行時，呼叫 Windows pwsh.exe，不使用 Linux pwsh。若找不到 pwsh.exe，以 Windows powershell.exe 執行 scripts/ensure-pwsh.ps1，為目前使用者安裝 PowerShell 7，並告訴我安裝了什麼；若安裝失敗，停止執行並提示我依 https://learn.microsoft.com/zh-tw/powershell/scripting/install/microsoft-update-faq?view=powershell-7.6 安裝 PowerShell 7。確認桌面版 MathType for Windows ProductVersion 7.11.1.462，以及 Microsoft Word 與 PowerPoint 桌面版均可使用；安裝可攜式 skill、註冊本機 stdio MCP server、執行兩項 MathType probe 與 repository 測試、保留既有 Agent 設定，並列出所有異動檔案。輸出未包含可編輯 Equation.DSMT4 物件或 validation 未回傳 ok: true 時，不得宣稱完成。
+從 https://github.com/felimet/mathtype-for-word 安裝或升級 MathType for Word and PowerPoint toolkit。偵測我目前可用的終端機，並使用 PowerShell 7、Windows 上的 Bash，包括 Git Bash，或 CMD。不可在 Windows PowerShell 5.1 執行 Office bridge；若目前為 5.1，切換至 Git Bash 或 CMD，再呼叫 Windows pwsh.exe。從 WSL Bash 執行時，呼叫 Windows pwsh.exe，不使用 Linux pwsh。若找不到 pwsh.exe，以 Windows powershell.exe 執行 scripts/ensure-pwsh.ps1，為目前使用者安裝 PowerShell 7，並告訴我安裝了什麼；若安裝失敗，停止執行並提示我依 https://learn.microsoft.com/zh-tw/powershell/scripting/install/microsoft-update-faq?view=powershell-7.6 安裝 PowerShell 7。確認桌面版 MathType for Windows ProductVersion 7.11.1.462，以及 Microsoft Word 與 PowerPoint 桌面版均可使用；Codex 與 Claude Code 從 repository 的 marketplace 安裝或升級 plugin（`codex plugin marketplace add felimet/mathtype-for-word` 或 `codex plugin marketplace upgrade mathtype-for-word`，再執行 `codex plugin add mathtype-for-word@mathtype-for-word`；`claude plugin marketplace add felimet/mathtype-for-word` 或 `claude plugin marketplace update mathtype-for-word`，再執行 `claude plugin install` 或 `claude plugin update mathtype-for-word@mathtype-for-word`），不要另外複製 skill 或手動註冊 MCP server；若已有手動註冊或複製的 skill，先告訴我並在移除前詢問我；其他平台安裝可攜式 skill 並註冊本機 stdio MCP server；執行兩項 MathType probe 與 repository 測試、保留既有 Agent 設定，並列出所有異動檔案。輸出未包含可編輯 Equation.DSMT4 物件或 validation 未回傳 ok: true 時，不得宣稱完成。
 ```
 
 再告訴 Agent 要處理的 DOCX 或 PPTX，以及需要建立的公式。
@@ -83,7 +83,16 @@ powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File 
 
 ### Codex
 
-將 `skills/mathtype-for-word` 複製至 `%USERPROFILE%\.codex\skills\mathtype-for-word` 或 `%USERPROFILE%\.agents\skills\mathtype-for-word`，再註冊 MCP server：
+從本 repository 的 marketplace 安裝 plugin。Plugin 內含 skill 與 MCP server，從安裝資料夾啟動 server，設定 1200 秒工具上限，並轉送 `MATHTYPE_*` 設定：
+
+```console
+codex plugin marketplace add felimet/mathtype-for-word
+codex plugin add mathtype-for-word@mathtype-for-word
+```
+
+升級時執行 `codex plugin marketplace upgrade mathtype-for-word`，再執行一次 `codex plugin add`。安裝或升級後重新啟動 Codex。
+
+若要改為手動註冊，將 `skills/mathtype-for-word` 複製至 `%USERPROFILE%\.codex\skills\mathtype-for-word` 或 `%USERPROFILE%\.agents\skills\mathtype-for-word`，再註冊 MCP server：
 
 ```console
 codex mcp add mathtype-for-word -- python "<REPO_ROOT>\scripts\mcp_server.py"
@@ -99,18 +108,27 @@ tool_timeout_sec = 1200
 
 Codex 只把固定一組環境變數傳給 MCP server。若要調整 `MATHTYPE_OFFICE_TIMEOUT_SECONDS` 或其他 `MATHTYPE_*` 設定，請在同一項目的 `env_vars` 列出變數名稱。
 
-Release 亦包含 `.codex-plugin/plugin.json` 與 `dist/mathtype-for-word-plugin.zip`，供支援 plugin 的部署流程使用。Plugin 已自行設定逾時，並轉送 `MATHTYPE_WORD_POWERSHELL`、`MATHTYPE_OFFICE_TIMEOUT_SECONDS`（或其 1.3.0 名稱 `MATHTYPE_WORD_TIMEOUT_SECONDS`）與 `MATHTYPE_BRIDGE_LOCK_WAIT_SECONDS`。以 `codex mcp add` 註冊的同名 server 優先於 plugin 內的 server。
+Plugin 與手動註冊擇一使用：以 `codex mcp add` 註冊的同名 server 優先於 plugin 內的 server。Plugin 會轉送 `MATHTYPE_WORD_POWERSHELL`、`MATHTYPE_OFFICE_TIMEOUT_SECONDS`（或其 1.3.0 名稱 `MATHTYPE_WORD_TIMEOUT_SECONDS`）與 `MATHTYPE_BRIDGE_LOCK_WAIT_SECONDS`。
 
 ### Claude Code
 
-將 `skills/mathtype-for-word` 複製至 `%USERPROFILE%\.claude\skills\mathtype-for-word`，再註冊 MCP server：
+從本 repository 的 marketplace 安裝 plugin：
+
+```console
+claude plugin marketplace add felimet/mathtype-for-word
+claude plugin install mathtype-for-word@mathtype-for-word
+```
+
+升級時執行 `claude plugin marketplace update mathtype-for-word` 與 `claude plugin update mathtype-for-word@mathtype-for-word`。
+
+若要改為手動註冊，將 `skills/mathtype-for-word` 複製至 `%USERPROFILE%\.claude\skills\mathtype-for-word`，再註冊 MCP server：
 
 ```console
 claude mcp add --scope user mathtype-for-word -- python "<REPO_ROOT>\scripts\mcp_server.py"
 claude mcp get mathtype-for-word
 ```
 
-Release 亦包含 `.claude-plugin/plugin.json`、`.mcp.json` 與合併 plugin 套件。安裝後重新啟動 Claude Code。
+Plugin 與手動註冊擇一使用，否則 Claude Code 會載入兩個 server 與兩份 skill。安裝或升級後重新啟動 Claude Code。
 
 ### Claude Desktop
 

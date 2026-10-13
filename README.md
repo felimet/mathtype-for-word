@@ -51,7 +51,7 @@ pwsh.exe -NoProfile -ExecutionPolicy Bypass -File scripts/mathtype-word.ps1 -Act
 
 ### PowerShell 7
 
-The MCP server is a Python program, and no PowerShell 7 is needed to start it: the plugin's launch command runs under Windows PowerShell 5.1 (`powershell.exe`), which every supported Windows has, and the registrations above start `python` directly. The bridge runs in PowerShell 7. When no PowerShell 7 exists, the first tool call that needs it installs PowerShell 7.6.6 (LTS) for the current user and tells you what it installed:
+The MCP server is a Python program, and no PowerShell 7 is needed to start it: Claude Code's plugin launch command runs under Windows PowerShell 5.1 (`powershell.exe`), which every supported Windows has, and the Codex plugin and the hand registrations below start `python` directly. The bridge runs in PowerShell 7. When no PowerShell 7 exists, the first tool call that needs it installs PowerShell 7.6.6 (LTS) for the current user and tells you what it installed:
 
 - The official ZIP release of PowerShell from GitHub, accepted only when its SHA-256 matches the hash pinned in `scripts/ensure-pwsh.ps1` and `pwsh.exe` is validly signed by Microsoft.
 - Installed into `%USERPROFILE%\.mathtype-for-word\PowerShell\<version>`. No administrator rights, prompt, PATH change, or registry change; only this plugin uses it, and deleting the folder removes it. It is updated only with a new release of this plugin.
@@ -70,7 +70,7 @@ When the download is blocked (offline, a proxy, or a policy), install PowerShell
 If you want to use MathType for Word and PowerPoint in Claude Code, Claude Desktop, Codex, or ChatGPT Desktop, paste the following prompt. The agent will configure it for the current environment:
 
 ```text
-Install or upgrade the MathType for Word and PowerPoint toolkit from https://github.com/felimet/mathtype-for-word. Detect my available terminal and use PowerShell 7, Bash on Windows including Git Bash, or CMD. Do not run the Office bridge under Windows PowerShell 5.1; if 5.1 is active, switch to Git Bash or CMD and invoke Windows pwsh.exe. From WSL Bash, invoke Windows pwsh.exe rather than Linux pwsh. If pwsh.exe is missing, run scripts/ensure-pwsh.ps1 with Windows powershell.exe, which installs PowerShell 7 for the current user, and tell me what it installed; if it fails, stop and tell me to install PowerShell 7 using https://learn.microsoft.com/zh-tw/powershell/scripting/install/microsoft-update-faq?view=powershell-7.6. Verify desktop MathType for Windows ProductVersion 7.11.1.462 plus Microsoft Word and PowerPoint desktop, install the portable skill, register the local stdio MCP server, run both MathType probes and the repository tests, preserve existing agent configuration, and report every changed file. Do not claim success unless the outputs contain editable Equation.DSMT4 objects and validation returns ok: true.
+Install or upgrade the MathType for Word and PowerPoint toolkit from https://github.com/felimet/mathtype-for-word. Detect my available terminal and use PowerShell 7, Bash on Windows including Git Bash, or CMD. Do not run the Office bridge under Windows PowerShell 5.1; if 5.1 is active, switch to Git Bash or CMD and invoke Windows pwsh.exe. From WSL Bash, invoke Windows pwsh.exe rather than Linux pwsh. If pwsh.exe is missing, run scripts/ensure-pwsh.ps1 with Windows powershell.exe, which installs PowerShell 7 for the current user, and tell me what it installed; if it fails, stop and tell me to install PowerShell 7 using https://learn.microsoft.com/zh-tw/powershell/scripting/install/microsoft-update-faq?view=powershell-7.6. Verify desktop MathType for Windows ProductVersion 7.11.1.462 plus Microsoft Word and PowerPoint desktop, for Codex and Claude Code, install or upgrade the plugin from the repository's marketplace (`codex plugin marketplace add felimet/mathtype-for-word` or `codex plugin marketplace upgrade mathtype-for-word`, then `codex plugin add mathtype-for-word@mathtype-for-word`; `claude plugin marketplace add felimet/mathtype-for-word` or `claude plugin marketplace update mathtype-for-word`, then `claude plugin install` or `claude plugin update mathtype-for-word@mathtype-for-word`) and do not also copy the skill or register the MCP server by hand; if a hand registration or a copied skill already exists, tell me and ask before removing it; for other hosts, install the portable skill and register the local stdio MCP server; run both MathType probes and the repository tests, preserve existing agent configuration, and report every changed file. Do not claim success unless the outputs contain editable Equation.DSMT4 objects and validation returns ok: true.
 ```
 
 Then tell your agent which DOCX or PPTX file to edit and describe the required equations.
@@ -83,7 +83,16 @@ Replace `<REPO_ROOT>` with the absolute local checkout path. Preserve existing M
 
 ### Codex
 
-Copy `skills/mathtype-for-word` to `%USERPROFILE%\.codex\skills\mathtype-for-word` or `%USERPROFILE%\.agents\skills\mathtype-for-word`, then register the server:
+Install the plugin from this repository's marketplace. The plugin carries the skill and the MCP server, starts the server from its installed folder, sets the 1200 s tool limit and forwards the `MATHTYPE_*` settings:
+
+```console
+codex plugin marketplace add felimet/mathtype-for-word
+codex plugin add mathtype-for-word@mathtype-for-word
+```
+
+To upgrade, run `codex plugin marketplace upgrade mathtype-for-word` and then the `codex plugin add` command again. Restart Codex after installing or upgrading.
+
+To register the parts by hand instead, copy `skills/mathtype-for-word` to `%USERPROFILE%\.codex\skills\mathtype-for-word` or `%USERPROFILE%\.agents\skills\mathtype-for-word`, then register the server:
 
 ```console
 codex mcp add mathtype-for-word -- python "<REPO_ROOT>\scripts\mcp_server.py"
@@ -99,18 +108,27 @@ tool_timeout_sec = 1200
 
 Codex passes MCP servers only a fixed set of environment variables. To change `MATHTYPE_OFFICE_TIMEOUT_SECONDS` or another `MATHTYPE_*` setting, list it in `env_vars` in the same entry.
 
-The release also contains `.codex-plugin/plugin.json` and `dist/mathtype-for-word-plugin.zip` for plugin-aware deployment. The plugin sets the timeout itself and forwards `MATHTYPE_WORD_POWERSHELL`, `MATHTYPE_OFFICE_TIMEOUT_SECONDS` (or its 1.3.0 name `MATHTYPE_WORD_TIMEOUT_SECONDS`) and `MATHTYPE_BRIDGE_LOCK_WAIT_SECONDS`. A server registered with `codex mcp add` under the same name takes precedence over the plugin's server.
+Use the plugin or the hand registration, not both: a server registered with `codex mcp add` under the same name takes precedence over the plugin's server. The plugin forwards `MATHTYPE_WORD_POWERSHELL`, `MATHTYPE_OFFICE_TIMEOUT_SECONDS` (or its 1.3.0 name `MATHTYPE_WORD_TIMEOUT_SECONDS`) and `MATHTYPE_BRIDGE_LOCK_WAIT_SECONDS`.
 
 ### Claude Code
 
-Copy `skills/mathtype-for-word` to `%USERPROFILE%\.claude\skills\mathtype-for-word`, then register the server:
+Install the plugin from this repository's marketplace:
+
+```console
+claude plugin marketplace add felimet/mathtype-for-word
+claude plugin install mathtype-for-word@mathtype-for-word
+```
+
+To upgrade, run `claude plugin marketplace update mathtype-for-word` and `claude plugin update mathtype-for-word@mathtype-for-word`.
+
+To register the parts by hand instead, copy `skills/mathtype-for-word` to `%USERPROFILE%\.claude\skills\mathtype-for-word`, then register the server:
 
 ```console
 claude mcp add --scope user mathtype-for-word -- python "<REPO_ROOT>\scripts\mcp_server.py"
 claude mcp get mathtype-for-word
 ```
 
-The release also contains `.claude-plugin/plugin.json`, `.mcp.json`, and the combined plugin package. Restart Claude Code after installation.
+Use the plugin or the hand registration, not both, or Claude Code loads two servers and two skills. Restart Claude Code after installing or upgrading.
 
 ### Claude Desktop
 

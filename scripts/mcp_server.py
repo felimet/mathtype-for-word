@@ -18,7 +18,7 @@ from typing import Any, BinaryIO
 
 
 SERVER_NAME = "mathtype-for-word"
-SERVER_VERSION = "1.4.1"
+SERVER_VERSION = "1.4.2"
 # Absolute: main() leaves the folder the server was started in.
 SCRIPT_PATH = Path(__file__).resolve().with_name("mathtype-word.ps1")
 ENSURE_POWERSHELL_PATH = SCRIPT_PATH.with_name("ensure-pwsh.ps1")
