@@ -312,7 +312,7 @@ class StaticContractTests(unittest.TestCase):
                     self.assertTrue(same(skill.read(f"mathtype-for-word/{name}"), path))
 
     def test_release_versions_are_aligned(self) -> None:
-        expected = "1.4.0"
+        expected = "1.4.1"
         expected_author = "Jia-Ming Zhou (Felimet)"
         for path in (
             ROOT / ".claude-plugin" / "plugin.json",
