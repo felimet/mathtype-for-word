@@ -9,6 +9,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import traceback
 import uuid
@@ -18,8 +19,9 @@ from typing import Any, BinaryIO
 
 SERVER_NAME = "mathtype-for-word"
 SERVER_VERSION = "1.4.0"
-SCRIPT_PATH = Path(__file__).with_name("mathtype-word.ps1")
-ENSURE_POWERSHELL_PATH = Path(__file__).with_name("ensure-pwsh.ps1")
+# Absolute: main() leaves the folder the server was started in.
+SCRIPT_PATH = Path(__file__).resolve().with_name("mathtype-word.ps1")
+ENSURE_POWERSHELL_PATH = SCRIPT_PATH.with_name("ensure-pwsh.ps1")
 DEFAULT_PROTOCOL_VERSION = "2025-06-18"
 WORD_COMMANDS_KEY = r"Software\Design Science\DSMT7\WordCommands"
 # Same names and paths as $script:WarningPreferenceNames, $script:WarningJournalPath and the bridge mutex.
@@ -34,8 +36,8 @@ WAIT_ABANDONED = 0x80
 JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
 JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
 _BRIDGE_JOB: int | None = None
-# One tool call waits this long for a PowerShell 7 install, then reports it as running: Codex ends a tool call
-# after 60 s by default. The installer itself may take this long on a slow connection.
+# One tool call waits this long for a PowerShell 7 install, then reports it as running, well inside Codex's 300 s
+# default tool-call limit. The installer itself may take this long on a slow connection.
 POWERSHELL_INSTALL_WAIT_SECONDS = 45
 POWERSHELL_INSTALL_TIMEOUT_SECONDS = 20 * 60
 POWERSHELL_VARIABLE = "MATHTYPE_WORD_POWERSHELL"
@@ -130,7 +132,8 @@ TOOLS: list[dict[str, Any]] = [
                     "default": False,
                     "description": (
                         "Start a detached job and return at once; poll get_mathtype_render_status. "
-                        "Use it when the render may outlast the client's tool-call time limit."
+                        "Use it when equations plus references exceed batch_size: a foreground render runs "
+                        "every Word session in one tool call, which can outlast the client's time limit."
                     ),
                 },
                 "partial_manifest": {
@@ -968,8 +971,8 @@ def _handle(message: dict[str, Any]) -> dict[str, Any] | None:
                 "instructions": (
                     "Use the matching Word or PowerPoint probe first. Preserve the source, render from a "
                     "schema v1 manifest, then validate. Large manifests render in resumable batches; use "
-                    "background=true with get_mathtype_render_status when a render may outlast the tool-call "
-                    "time limit. DOCX numbering and references must remain MathType-native fields. PPTX "
+                    "background=true with get_mathtype_render_status when equations plus references exceed "
+                    "batch_size. DOCX numbering and references must remain MathType-native fields. PPTX "
                     "equations are editable floating Equation.DSMT4 OLE objects. When a result has a notice, "
                     "tell the user its text."
                 ),
@@ -990,6 +993,9 @@ def main() -> int:
     # Windows starts Python with the ANSI code page on pipes; CJK paths in logs must not raise or garble.
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     _log(f"starting {SERVER_VERSION}")
+    # Codex starts the server in the plugin's install folder. On Windows a process's working folder cannot be
+    # renamed or deleted, so staying there (and passing it on to bridges and background jobs) blocks plugin updates.
+    os.chdir(tempfile.gettempdir())  # exists even when a client passes no USERPROFILE
     while True:
         message: dict[str, Any] | None = None
         try:

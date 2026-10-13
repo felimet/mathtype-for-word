@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -97,6 +98,23 @@ class McpProtocolTests(unittest.TestCase):
         )
         self.assertEqual(unknown_tool["id"], 5)
         self.assertEqual(unknown_tool["error"]["code"], -32603)
+
+    def test_server_leaves_the_folder_it_was_started_in(self) -> None:
+        # Codex starts the server in the plugin's install folder, which an update must be able to replace.
+        with tempfile.TemporaryDirectory() as scratch:
+            folder = Path(scratch) / "plugin"
+            folder.mkdir()
+            server = subprocess.Popen([sys.executable, str(SERVER)], cwd=folder, stdin=subprocess.PIPE,
+                                      stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8")
+            try:
+                server.stdin.write('{"jsonrpc":"2.0","id":1,"method":"ping"}\n')
+                server.stdin.flush()
+                self.assertEqual(json.loads(server.stdout.readline())["id"], 1)
+                folder.rename(Path(scratch) / "replaced")  # PermissionError while a process works in the folder
+            finally:
+                server.stdin.close()
+                server.wait(timeout=10)
+                server.stdout.close()
 
     def test_shared_plugin_launcher(self) -> None:
         config = json.loads((ROOT / ".mcp.json").read_text(encoding="utf-8"))

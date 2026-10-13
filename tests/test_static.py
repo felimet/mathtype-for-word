@@ -75,12 +75,24 @@ class StaticContractTests(unittest.TestCase):
         self.assertFalse(numbering["warn_when_inserting_equation_references"])
         self.assertTrue(numbering["use_as_default_for_new_documents"])
 
-    def test_platform_specific_plugin_root_variables(self) -> None:
+    def test_platform_specific_plugin_launch(self) -> None:
+        # Claude Code substitutes and exports CLAUDE_PLUGIN_ROOT. Codex expands no ${PLUGIN_ROOT} in a .codex-plugin
+        # manifest's server file and starts the server in the session folder unless cwd is set; it resolves a relative
+        # cwd against the installed plugin root.
         claude = (ROOT / ".mcp.json").read_text(encoding="utf-8")
-        codex = (ROOT / ".codex-mcp.json").read_text(encoding="utf-8")
         self.assertIn("CLAUDE_PLUGIN_ROOT", claude)
-        self.assertIn("PLUGIN_ROOT", claude)
-        self.assertIn("${PLUGIN_ROOT}", codex)
+        manifest = json.loads((ROOT / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["mcpServers"], "./.codex-mcp.json")
+        self.assertLessEqual(len(manifest["interface"]["defaultPrompt"]), 3)  # Codex drops the rest and warns
+        codex = json.loads((ROOT / ".codex-mcp.json").read_text(encoding="utf-8"))["mcpServers"]["mathtype-for-word"]
+        self.assertEqual((codex["command"], codex["args"], codex["cwd"]), ("python", ["scripts/mcp_server.py"], "."))
+        self.assertNotIn("${", json.dumps(codex))
+        self.assertGreater(codex["tool_timeout_sec"], 300)  # Codex's default; one render session can run longer
+        server = (ROOT / "scripts" / "mcp_server.py").read_text(encoding="utf-8")
+        for name in codex["env_vars"]:  # Codex forwards only whitelisted and listed variables
+            self.assertIn(name, server + (ROOT / "scripts" / "mathtype-word.ps1").read_text(encoding="utf-8"))
+        # Codex passes MCP servers only a whitelist of environment variables, without OS.
+        self.assertNotIn("$env:OS", (ROOT / "scripts" / "mathtype-word.ps1").read_text(encoding="utf-8"))
 
     def test_server_starts_without_powershell_7_and_bridge_requires_it(self) -> None:
         # The server starts without PowerShell 7 and can install it: the plugin launches it through Windows
