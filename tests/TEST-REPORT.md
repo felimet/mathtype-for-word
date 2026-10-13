@@ -40,11 +40,15 @@ Both skill validators ran with `PYTHONUTF8=1` and an ephemeral `uv run --with py
 
 ### Live PowerPoint
 
-The PowerPoint render could not be re-run on this host: another program held the Windows clipboard open for the whole session (`OpenClipboard` failed with `ERROR_ACCESS_DENIED`, the holder opened it without a window, the last writer was a chat application). The 1.3.0 bridge fails the same way on this host. Verified live instead: the failure path left no Office process and no journal; a presentation the user has open is refused; a validation run attached to the user's PowerPoint left it and its presentation open. The 1.3.0 evidence below still describes the render path itself.
+`tests\run-live-powerpoint-integration.ps1`: PASS, twice, once the clipboard was free. The probe reported Word ready; the render placed one centered `Equation.DSMT4` object named `MathType_root_mean_square_error` whose MathML matched the manifest; validation passed; no Word process was left behind, no journal remained, and a Word window the user had open stayed untouched.
+
+Earlier in the release, another program held the Windows clipboard open for a whole session (`OpenClipboard` failed with `ERROR_ACCESS_DENIED`; the last writer was a chat application). Verified live then: the failure path left no Office process and no journal and named the holder; a presentation the user has open is refused; a validation run attached to the user's PowerPoint left it and its presentation open.
 
 ### PowerShell 7 installation
 
-Not run against GitHub: this host already has PowerShell 7.6.6, and the tests download nothing. The pinned SHA-256 values of `PowerShell-7.6.6-win-x64.zip` and `PowerShell-7.6.6-win-arm64.zip` match the asset digests that the GitHub release API reports.
+Real download through the MCP server: PASS. The server ran with PowerShell 7 hidden from it (no `pwsh.exe` on `PATH`, `ProgramFiles` pointing at an empty folder, `USERPROFILE` at a scratch profile) and was started by the plugin's own launch command. The first `probe_mathtype_word` call downloaded `PowerShell-7.6.6-win-x64.zip` from GitHub, checked it and returned `powershell.status: installed` with the notice, after 16.5 s; the next call ran the probe in the new copy (Word ready). The install folder held only `7.6.6`, with `pwsh.exe` validly signed by Microsoft and reporting 7.6.6; a second server found that copy and ran the probe with no install and no notice.
+
+The pinned SHA-256 values of `PowerShell-7.6.6-win-x64.zip` and `PowerShell-7.6.6-win-arm64.zip` match the asset digests that the GitHub release API reports. A first attempt from a test folder whose `pwsh.exe` path exceeded 260 characters failed, because the ZIP's `pwsh.exe` does not start from such a path; a profile path that long is far outside normal Windows profiles.
 
 ## 1.3.0
 
