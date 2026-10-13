@@ -22,7 +22,7 @@ AI Agent 編輯 Word、PowerPoint 或 MathType 內容時，必須在背景靜默
 
 - Windows 10 或 11。
 - 支援 COM automation 的 Microsoft Word 與 PowerPoint 桌面版。
-- `PATH` 中可使用 Python 3。
+- `PATH` 中可使用 Python 3。伺服器只用標準函式庫，不需以 pip 安裝任何套件。
 - 可使用 `pwsh.exe` 的 PowerShell 7 以上版本。若尚未安裝，plugin 會為目前使用者安裝 PowerShell 7.6 LTS 並告知，參閱 [PowerShell 7](#powershell-7)。
 - 從 [MathType 下載頁面](https://mathtype.tw/download/)安裝桌面版 **MathType for Windows**。
 

@@ -22,7 +22,7 @@ When an AI agent edits Word, PowerPoint, or MathType content, it must operate si
 
 - Windows 10 or 11.
 - Microsoft Word and PowerPoint desktop with COM automation.
-- Python 3 on `PATH`.
+- Python 3 on `PATH`. The server uses only the standard library, so there is nothing to install with pip.
 - PowerShell 7 or later as `pwsh.exe`. When it is missing, the plugin installs PowerShell 7.6 LTS for the current user and tells you; see [PowerShell 7](#powershell-7).
 - Desktop **MathType for Windows** from the [MathType download page](https://mathtype.tw/download/).
 
