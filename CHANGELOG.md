@@ -134,9 +134,6 @@ longer quits the user's PowerPoint, and a missing PowerShell 7 is installed for 
 
 ### Known limitations
 
-- The successful PowerPoint render path, which changed in this release, was not re-run live: another program
-  held the Windows clipboard open on the test host. The clipboard failure path, the refusal of an open
-  presentation, and a validation run attached to a running PowerPoint were verified live.
 - Batched rendering was run live with one operation per session on a small fixture, not on a manuscript with
   hundreds of equations.
 - Scan signals are hints; the agent decides each span. `scan_mathtype_candidates` reads only the main text and
@@ -150,6 +147,7 @@ longer quits the user's PowerPoint, and a missing PowerShell 7 is installed for 
 - There is no tool to cancel a render job; end the process whose `pid` the status reports, and resume later.
 - The automatically installed PowerShell 7 is updated only by a new release of this plugin, and application
   control that blocks programs in the user profile (such as AppLocker's default rules) prevents it from running.
+  It also cannot start from a user profile whose path is long enough to push `pwsh.exe` past 260 characters.
 
 ## [1.3.0] - 2026-07-22
 
