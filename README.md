@@ -1,5 +1,7 @@
 # MathType for Word and PowerPoint
 
+[![HOL Guard](https://img.shields.io/endpoint?url=https%3A%2F%2Fhol.org%2Fapi%2Fregistry%2Fbadges%2Fplugin%3Fslug%3Djia-ming-zhou-felimet%252Fmathtype-for-word%26metric%3Drelease)](https://hol.org/registry/plugins/jia-ming-zhou-felimet%2Fmathtype-for-word?utm_source=hol_marketplace&utm_medium=plugins_badge&utm_campaign=plugins&utm_content=jia-ming-zhou-felimet%2Fmathtype-for-word&ref=plugin-author-a1ebb28d)
+
 [繁體中文](README-zhTW.md)
 
 An installable AI Agent skill, Codex/Claude plugin, and MCP server for creating editable MathType 7 equations in Microsoft Word and PowerPoint. Word documents also support MathType-native equation numbering and dynamic cross-references.
