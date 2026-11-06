@@ -165,6 +165,12 @@ Treat any of these as a failed deliverable:
 - Remaining `{{MATH:...}}`, `{{EQREF:...}}`, or `equation reference goes here` text.
 - Non-sequential equation values starting from 1.
 - `Error! Reference source not found.`
+- A Chinese `其中，` explanation inherits a two-character first-line indent, or has nonzero
+  `w:firstLine` or `w:firstLineChars`.
+- An inline-math paragraph lacks centered Chinese text alignment (`w:textAlignment="center"`), or an
+  inline equation run has a nonzero or missing Normal character position (`w:position="0"`).
+- A paragraph containing an inline equation uses exact/fixed line spacing, or its At Least minimum
+  is below the intended body line height.
 
 ## Failure handling
 
@@ -173,7 +179,7 @@ Treat any of these as a failed deliverable:
 - If MathType fails to create or resolve `MTReference`, preserve the failed output only for diagnosis and do not present it as complete.
 - If the MCP watchdog reports a timeout, record `bridge_office_pids`, `isolated_office_processes_terminated`, `new_office_pids_left_running`, and the cleanup result, verify the warning preferences were restored (`%APPDATA%\MathTypeForWordAgent\warning-preferences.json` absent means the user's values are back; present means the next render, render-pptx, or configure-defaults call restores them when it takes the bridge lock), then retry only the smallest fixture once before escalating. For `render_mathtype_word_document`, these keys are in the `timeouts` list of the render result, successful or failed, or of `get_mathtype_render_status`; other tools report them at the top level. The watchdog terminates only Office processes the bridge logged as its own; it never terminates other new Word or PowerPoint windows.
 - A bridge killed before it finishes (with its MCP server, or by ending a background job's process, the `pid` in its status) skips its own cleanup. The next render, render-pptx, or configure-defaults call ends the hidden Word or PowerPoint that the killed run launched (unless it now shows a document window or a slide show) and restores the warning preferences when it takes the bridge lock.
-- If the requested TeX is outside MathType's supported conversion subset, simplify it, split it into supported expressions, or ask for a MathType-authored source equation.
+- If the requested TeX is outside MathType's supported conversion subset, simplify it, split it into supported expressions, or ask for a MathType-authored source equation. The measured Texvc subset and its substitutions are in [academic-equation-style.md](references/academic-equation-style.md); Toggle TeX accepts unknown commands and renders them as literal red text, a black diamond, or a silently dropped symbol.
 - Word COM is single-user desktop automation. Do not run two render jobs concurrently in the same Windows profile. The job runner refuses a second Word render job, and the MCP tools `render_mathtype_powerpoint_presentation` and `configure_mathtype_word_defaults` are refused while a Word render job is active. A direct `mathtype-word.ps1 -Action render-pptx` or `-Action configure-defaults` call is not checked: do not start one while `python scripts\mathtype_batch.py status --output <docx>` reports `queued` or `running`.
 
 ## Reference routing

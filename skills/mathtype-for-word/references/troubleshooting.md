@@ -7,6 +7,9 @@
 | `equation_dsmt4_registered` is false | MathType OLE registration is broken | Run MathType repair as the same Windows user. |
 | Toggle TeX creates no object | Unsupported delimiter/TeX, add-in not loaded, or interactive dialog | Use one-line portable TeX; confirm `$...$` for inline and `\[...\]` for display; inspect Word add-ins. |
 | Toggle TeX creates Word OMath | Word conversion was used instead of MathType | Remove the OMath result and rerun through `MTCommand_TeXToggle`. |
+| TeX comes back as literal red text | Toggle TeX speaks Texvc; the command is outside its subset | Use `\mathbf`, `\boldsymbol`, `\mathrm`, `\mathcal`, `\mathbb`, `\widehat`, `\bar`, `\tilde`, `\odot`, `\vartheta`. Avoid `\mathbfit`, `\bm`, `\mathbold`, `\widebar`, `\widetilde`, `\operatorname`, `\lvert`, `\rvert`, `\partial`, `\middle`, `\text`, `cases`. |
+| Equation renders as a black diamond (`◆`) | The command maps to no glyph in Texvc | `\Longrightarrow`, `\iff`, `\longrightarrow`, `\lceil`, `\rceil` are the common ones; use `\Rightarrow`, `\Leftrightarrow`, `\rightarrow`, or `\mathrm{ceil}`. |
+| A subscript vanished, or a norm lost its bars | The construct was dropped silently instead of echoed, so object counts and number fields still look correct | `\mathop{...}` drops its subscript, `\limits`/`\nolimits` vanish, and a norm written `\|x\|_2` or `\left\|x\right\|_2` loses its double bars. Use `\mathrm{...}_{...}` and `\lVert x\rVert_2`. |
 | Number is `(1.1)` | Existing MathType format includes section number | Render through the bridge; it removes current `MTSec`/`MTChap` components while preserving `MTPlaceRef`. |
 | `MTReference` remains | The target `MTPlaceRef` action did not complete | Do not type over it; retry against a native numbered equation. |
 | `Error! Reference source not found.` | A `ZEqnNum...` bookmark was deleted or the field was copied incorrectly | Recreate the reference through MathType; do not hand-edit the bookmark. |

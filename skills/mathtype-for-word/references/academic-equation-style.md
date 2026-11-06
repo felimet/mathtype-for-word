@@ -4,6 +4,7 @@
 
 - Keep an inline equation inside the grammatical sentence and preserve surrounding punctuation.
 - Put a display equation in its own paragraph.
+- Keep paragraphs containing inline MathType objects on At Least line spacing so the embedded object can expand the line instead of being clipped by an exact/fixed height.
 - Introduce every display equation in the preceding prose. Do not let a display appear without a textual lead-in.
 - Refer to a numbered equation through its MathType reference field, for example “如式 (1) 所示”. Never type the number manually.
 - Begin the first explanatory paragraph after a display with `其中，` when defining notation in Traditional Chinese.
@@ -37,7 +38,7 @@ Apply these tie-breakers in order:
 
 ## Required paragraph pattern
 
-Place every `display` and `display_numbered` equation in its own centered paragraph. Put a textual lead-in immediately before it. Start the following paragraph with `其中，` in Traditional Chinese, then define every symbol, index, subscript, superscript, unit, and physical meaning. Do not leave a variable used in the equation or body undefined, and do not add a variable that is absent from the equation or surrounding body. In particular, 不得列出未於正文說明的變數。
+Place every `display` and `display_numbered` equation in its own centered paragraph. Put a textual lead-in immediately before it. Start the following paragraph with `其中，` in Traditional Chinese, then define every symbol, index, subscript, superscript, unit, and physical meaning. Treat the lead-in, equation, and `其中，` explanation as one logical paragraph unit: the `其中，` paragraph has no first-line indent, and all three stay together on the same page. Enforce this directly with `w:ind/@w:firstLine="0"` and remove or zero `w:firstLineChars`; do not rely on the body style's default two-character indent. Do not leave a variable used in the equation or body undefined, and do not add a variable that is absent from the equation or surrounding body. In particular, 不得列出未於正文說明的變數。
 
 Source pattern:
 
@@ -90,6 +91,8 @@ For every document:
 5. Keep scalar variables and variable indices italic, including Greek letters used as variables.
 6. Keep vectors bold lowercase and matrices or tensors bold uppercase unless the user's established notation explicitly differs.
 7. Visually inspect the complete output because structural OLE validation cannot prove font weight, slant, or consistency.
+8. For every paragraph containing an inline MathType object, set the object run's Word character position to **Normal** (`w:position/@w:val="0"`), set the paragraph's Chinese text alignment to **Center** (`w:textAlignment/@w:val="center"`), and use **At Least** line spacing with the established body line height as the minimum.
+9. Leave display-only `MTDisplayEquation` paragraphs subject to the display-layout rules; do not apply the inline paragraph text-alignment rule to them.
 
 These rules follow the IEEE guidance that variables remain italic in both prose and equations, vectors use bold type, and function names use Roman type. Consult the [IEEE Mathematics Style Guide](https://journals.ieeeauthorcenter.ieee.org/wp-content/uploads/sites/7/Editing-Mathematics.pdf) and [IEEE Math Typesetting Guide](https://journals.ieeeauthorcenter.ieee.org/wp-content/uploads/sites/7/IEEE-Math-Typesetting-Guide-for-LaTeX-Users.pdf) when the target publication does not provide a stricter house style.
 
@@ -174,4 +177,53 @@ Structural validation proves object and field type, not appearance. Visually ins
 - Functions, acronyms, descriptive labels, mathematical constants, differentials, and SI units are upright.
 - Each symbol has the same role and style in the equation, prose, captions, and definition paragraph.
 - A display equation and its number share the intended line and tab alignment.
+- Every `其中，` explanation begins at the left text edge with zero first-line indent.
+- Every paragraph containing inline equations has centered Chinese text alignment, and every object run uses Normal character position.
+- Inline-object paragraphs use At Least line spacing and do not clip the top or bottom of the formula or surrounding text.
 - Long equations do not collide with `(n)` or overflow the text width.
+
+## MathType carrier notes
+
+The rules above are LaTeX-facing. When the carrier is MathType, translate them like this:
+
+| Role | LaTeX convention | MathType carrier |
+|---|---|---|
+| Vector, per-sample quantity | `\mathbold{x}` (`\boldsymbol`, `\bm`) | `\mathbf{x}`. Toggle TeX has no bold-italic command, so `\mathbf`, `\boldsymbol`, `\bold` and `\textbf` all select MathType's **Vector** character style. Set that style to `Times New Roman,BI` so it renders bold italic; a `B`-only style renders upright vectors. |
+| Matrix or tensor | `\mathbold{X}` | `\mathbf{X}`, the same Vector style, distinguished by capitalisation. |
+| Function, module or method name | `\operatorname{GELU}`, `\mathrm{proto}` | `\mathrm{GELU}`, `\mathrm{proto}`; `\operatorname` is echoed as literal red text, `\mathrm` is not. |
+| Descriptive subscript | `\mathcal{L}_{\mathrm{cls}}` | The same; keep the subscript upright with `\mathrm`. |
+| Overbar | `\widebar{\pi}` | `\bar{\pi}`; `\widebar` is outside the Texvc subset. |
+| Layer index | `^{(l)}` | The same. Keep it a superscript, never plain text. |
+
+Toggle TeX speaks Texvc, not full LaTeX. It does **not** reject unknown commands: it still
+creates the object and either echoes the command as literal red text or silently drops the
+construct. Measured on MathType 7.8:
+
+| Result | Commands |
+|---|---|
+| Renders correctly | `\mathbf`, `\boldsymbol`, `\mathrm`, `\mathit`, `\mathcal`, `\mathbb`, `\bar`, `\widehat`, `\tilde`, `\vec`, `\odot`, `\star`, `\vartheta`, `\varepsilon`, `\upsilon`, `\varrho`, `\perp`, `\circ`, `\pm`, `\le`, `\ge`, `\ne`, `\sim`, `\equiv`, `\to`, `\rightarrow`, `\Rightarrow`, `\Leftrightarrow`, `\log`, `\exp`, `\max`, `\min`, `\arg`, `\sum`, `\prod`, `\int`, `\frac`, `\sqrt`, `\begin{bmatrix}`, `\left ... \right` |
+| Echoed as literal red text | `\mathbfit`, `\bm`, `\mathbold`, `\widebar`, `\widetilde`, `\operatorname`, `\lvert`, `\rvert`, `\partial`, `\middle`, `\text`, `\begin{cases}` |
+| Rendered as a black diamond | `\Longrightarrow`, `\iff`, `\longrightarrow`, `\lceil`, `\rceil` |
+| Silently drops a symbol | `\mathop{...}` drops its subscript; `\limits` and `\nolimits` vanish; a bare `\|` collapses a norm |
+
+Context matters for two of these: `\|` is fine as a vector-concatenation separator and
+`\lVert...\rVert` is fine *inside* `\left ... \right`, but a norm written as `\|x\|_2` or as
+`\left\|x\right\|_2` loses its double bars.
+
+Substitutions that keep the meaning:
+
+| Instead of | Write |
+|---|---|
+| `\operatorname{GELU}` | `\mathrm{GELU}` |
+| `\mathop{\mathrm{median}}_{i\in S}` | `\mathrm{median}_{i\in S}` |
+| `\widetilde{\boldsymbol{M}}` | `\tilde{\boldsymbol{M}}` |
+| `a\Longrightarrow b`, `a\iff b` | `a\Rightarrow b`, `a\Leftrightarrow b` |
+| `\lceil rn\rceil` | `\mathrm{ceil}(rn)` |
+| `\left\|x\right\|_2`, `\|x\|_2` | `\lVert x\rVert_2` |
+| `\begin{cases} a, & c \\ b, & d \end{cases}` | two statements joined by `\qquad`, each condition in `\left(\cdot\right)` |
+| `\text{otherwise}` | `\mathrm{otherwise}` |
+
+Toggle TeX accepts these commands instead of rejecting the manifest, so a wrong command can still
+produce a plausible-looking equation. Render every document that uses an uncommon command and
+inspect the pages; `\mathop` shows why the stored TeX cannot be trusted — it drops its subscript
+without leaving a trace. See `references/troubleshooting.md`.
