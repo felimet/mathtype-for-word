@@ -53,7 +53,7 @@ Create real MathType equations in DOCX and PPTX, preserving MathType-native Word
 4. Create a schema v1 JSON manifest. Read [workflow-and-schema.md](references/workflow-and-schema.md) for the exact contract and examples.
 5. For academic prose and mathematical typography, apply [academic-equation-style.md](references/academic-equation-style.md). A display equation must be introduced in the preceding prose and followed by “其中，” plus definitions of every symbol, index, superscript, subscript, unit, and physical meaning that is not already unambiguous. Audit the whole document so variables, vectors, matrices, functions, constants, indices, and units retain one consistent style.
 6. Call `render_mathtype_word_document`. Do not edit the same DOCX concurrently in Word. Manifests whose equations plus references exceed `batch_size` (default 40) render in fresh Word sessions with checkpoints; a foreground render runs all of them in one tool call, which can outlast the client's time limit (Codex: 1200 s with the plugin), so for such manifests pass `background: true` and poll `get_mathtype_render_status` while its status is `queued` or `running`, and stop on any other status. On `interrupted`, call render again with the same paths (and `background: true` again) to resume from the last checkpoint. On `failed`, read `error` first: a bad marker, TeX, or validation result needs a corrected manifest or document, which starts the job over.
-7. Call `validate_mathtype_word_document` with the same manifest. A render is incomplete until validation returns `ok: true`.
+7. Call `validate_mathtype_word_document` with the same manifest. A render is incomplete until validation returns `ok: true`. For a DOCX that contains inline equations, also run `python scripts\normalize_word_inline_math_layout.py <output.docx> --check` and require `ok: true`.
 8. For complex fractions, matrices, aligned systems, accents, or nested scripts, open/render the result and visually inspect it. Structural checks cannot prove typographic correctness.
 9. Report the output path, counts, native number/reference mechanism, validation result, and any limitations.
 
@@ -181,6 +181,7 @@ Treat any of these as a failed deliverable:
 - Manifest design and end-to-end examples: [workflow-and-schema.md](references/workflow-and-schema.md)
 - Native field anatomy and Format Equation Numbers behavior: [numbering-and-references.md](references/numbering-and-references.md)
 - Academic placement, consistent symbol typography, definitions, units, and TeX/MathML guidance: [academic-equation-style.md](references/academic-equation-style.md)
+- Chinese inline-math paragraph and character-position audit: `scripts/normalize_word_inline_math_layout.py --check`
 - Terminal selection plus Claude Code, Claude Desktop, Codex, and ChatGPT Desktop setup: [installation-matrix.md](references/installation-matrix.md)
 - Errors, recovery, and fallback boundary: [troubleshooting.md](references/troubleshooting.md)
 - MathType ribbon capability matrix and guarded interactive commands: [advanced-ribbon-operations.md](references/advanced-ribbon-operations.md)
