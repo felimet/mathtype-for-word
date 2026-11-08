@@ -4,7 +4,7 @@ All notable changes to this project are recorded here. The format follows
 [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/). Each release also lists upgrade notes and known limitations.
 
-## [Unreleased]
+## [1.4.3] - 2026-11-08
 
 Validation catches equations that MathType did not translate, rendering into a document that already holds MathType
 numbers works, and the workflow drops a duplicate validation pass.
@@ -343,6 +343,7 @@ DOCX and PowerPoint PPTX, with MathType-native equation numbers and references i
 - The prebuilt packages in `dist/` predate the last 1.3.0 changes (validation before publishing, temporary file
   cleanup, output naming in the skill). Install from the repository to get them.
 
+[1.4.3]: https://github.com/felimet/mathtype-for-word/releases/tag/v1.4.3
 [1.4.2]: https://github.com/felimet/mathtype-for-word/releases/tag/v1.4.2
 [1.4.1]: https://github.com/felimet/mathtype-for-word/releases/tag/v1.4.1
 [1.4.0]: https://github.com/felimet/mathtype-for-word/releases/tag/v1.4.0
