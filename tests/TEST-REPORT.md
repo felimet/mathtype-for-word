@@ -1,6 +1,6 @@
 # Test report
 
-## Unreleased: TeX translation check and existing numbers
+## 1.4.3
 
 Date: 2026-11-08
 

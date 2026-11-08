@@ -4,7 +4,7 @@ description: Create, replace, number, cross-reference, update, inspect, or valid
 license: MIT
 metadata:
   author: Jia-Ming Zhou (Felimet)
-  version: 1.4.2
+  version: 1.4.3
 ---
 
 # MathType for Word and PowerPoint
