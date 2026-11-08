@@ -48,22 +48,22 @@ Create real MathType equations in DOCX and PPTX, preserving MathType-native Word
 ## Mandatory Word workflow
 
 1. Preserve the input DOCX and choose an explicit output path.
-2. Call `probe_mathtype_word`. Stop on a failed prerequisite; report the exact failed check.
+2. Call `probe_mathtype_word` once per task, not before every render. Stop on a failed prerequisite; report the exact failed check.
 3. Scan the complete document twice. First inventory every equation candidate and later prose reference. Then classify each candidate as `inline`, `display`, or `display_numbered`, and each prose occurrence as `reference`, using [academic-equation-style.md](references/academic-equation-style.md). Decide every identifier, unique marker, TeX, layout, numbered state, reference marker, and target. When the draft holds plain-text mathematics or placeholders instead of `{{MATH:…}}` markers, call `scan_mathtype_candidates` first: it lists Word's paragraph numbers, the exact paragraph text, and math signals, including sub/superscripts that plain text loses. Then write a marks file and call `mark_mathtype_document` to save a marked copy, and render that copy. For a reference, mark only the number, such as `(1)`; `Eq.` or `式` stays in the prose. A display equation's marker must end up alone in its paragraph: mark the whole paragraph text only when the paragraph holds nothing but the formula. When a display formula shares its paragraph with prose (lines joined by Shift+Enter included), ask the user to put it in its own paragraph, or keep it inline if the user agrees, and scan again before marking.
 4. Create a schema v1 JSON manifest. Read [workflow-and-schema.md](references/workflow-and-schema.md) for the exact contract and examples.
 5. For academic prose and mathematical typography, apply [academic-equation-style.md](references/academic-equation-style.md). A display equation must be introduced in the preceding prose and followed by “其中，” plus definitions of every symbol, index, superscript, subscript, unit, and physical meaning that is not already unambiguous. Audit the whole document so variables, vectors, matrices, functions, constants, indices, and units retain one consistent style.
 6. Call `render_mathtype_word_document`. Do not edit the same DOCX concurrently in Word. Manifests whose equations plus references exceed `batch_size` (default 40) render in fresh Word sessions with checkpoints; a foreground render runs all of them in one tool call, which can outlast the client's time limit (Codex: 1200 s with the plugin), so for such manifests pass `background: true` and poll `get_mathtype_render_status` while its status is `queued` or `running`, and stop on any other status. On `interrupted`, call render again with the same paths (and `background: true` again) to resume from the last checkpoint. On `failed`, read `error` first: a bad marker, TeX, or validation result needs a corrected manifest or document, which starts the job over.
-7. Call `validate_mathtype_word_document` with the same manifest. A render is incomplete until validation returns `ok: true`.
-8. For complex fractions, matrices, aligned systems, accents, or nested scripts, open/render the result and visually inspect it. Structural checks cannot prove typographic correctness.
+7. Read the render result's `validation` (for a background job, `result.validation` from `get_mathtype_render_status` once it is `completed`). The bridge validates the saved file against the whole manifest before it publishes the output, so a successful render already carries the `ok: true` report; do not call `validate_mathtype_word_document` again for it. A render is incomplete until that report is `ok: true`. Call the validate tool only to re-check a document changed later, with the same manifest and the render's `existing_number_fields` and `existing_references`.
+8. Validation reads every saved equation and rejects one whose TeX MathType did not translate (red literal text) or whose symbol it could not map (a diamond), naming the equation and its TeX, and for red text the untranslated command. For complex fractions, matrices, accents, or nested scripts, still open/render the result and visually inspect the layout. Structural checks cannot prove typographic correctness.
 9. Report the output path, counts, native number/reference mechanism, validation result, and any limitations.
 
 ## Mandatory PowerPoint workflow
 
 1. Preserve the input PPTX and choose a distinct output path.
-2. Call `probe_mathtype_powerpoint`. Stop and report the exact failed check when `powerpoint_ready` is false.
+2. Call `probe_mathtype_powerpoint` once per task. Stop and report the exact failed check when `powerpoint_ready` is false.
 3. Put each `{{MATH:id}}` marker alone in a top-level text box. PowerPoint does not support inline external objects.
 4. Create a presentation schema v1 manifest, apply [academic-equation-style.md](references/academic-equation-style.md), and read [powerpoint-workflow.md](references/powerpoint-workflow.md).
-5. Call `render_mathtype_powerpoint_presentation`, then `validate_mathtype_powerpoint_presentation` with the same manifest.
+5. Call `render_mathtype_powerpoint_presentation`. Its result carries the validation of the saved presentation, which must be `ok: true`; call `validate_mathtype_powerpoint_presentation` only to re-check a presentation changed later.
 6. Render every output slide and inspect the full-size image. Structural OLE checks do not prove legibility or absence of overlap.
 7. Report that the result contains editable floating MathType OLE objects and that Word-style dynamic numbering/references are unavailable in PPTX.
 
@@ -109,7 +109,7 @@ Without Python, `-Action render` on the bridge renders in one Word session; use 
 - Promote a display to `display_numbered` when the full-document scan finds a specific later reference to it.
 - Only display equations may set `numbered: true`. Never create a reference to an unnumbered equation.
 - Every reference target must exist and be numbered.
-- Keep TeX on one line. Prefer MathType-compatible TeX primitives. Do not depend on document preambles, user macros, packages, `\label`, or `\ref`.
+- Keep TeX on one line. Prefer MathType-compatible TeX primitives, and avoid the commands MathType does not translate ([troubleshooting.md](references/troubleshooting.md#tex-that-toggle-tex-does-not-translate)), such as `\bm`, `\widetilde`, `\lvert`, `\iff`, `\Longrightarrow`, `\lceil`, and `aligned`. Put an accent inside a bold command (`\boldsymbol{\tilde{M}}`, `\mathbf{\hat{x}}`), not around it: Word's PDF export drops an accent drawn around a bold symbol. Do not depend on document preambles, user macros, packages, `\label`, or `\ref`.
 - Escape backslashes correctly in JSON. For example, TeX `\frac{a}{b}` is JSON string `"\\frac{a}{b}"`.
 - `numbered` defaults to `false` and `references` may be omitted. A paragraph with exact line spacing, or a table row with an exact height, lower than a new equation switches to an at-least value of the same size; set `exact_line_spacing: "keep"` only when the user requires exact spacing, and report the clipped-equation warning.
 
@@ -134,6 +134,7 @@ The bridge temporarily suppresses blocking dialogs during headless automation, r
 ## Editing existing documents
 
 - Use markers for deterministic edits. If the document has no markers, create a working copy and insert unique markers at the intended ranges before rendering.
+- Rendering converts only the marked ranges: existing MathType objects stay byte-identical, and validation expects the document's existing numbers and references plus the manifest's (`existing_number_fields` and `existing_references` in the render result).
 - Never use broad find/replace on TeX fragments or equation text.
 - After reordering or deleting numbered equations, call `update_mathtype_word_fields`, then validate again.
 - Do not unlink, flatten, or convert the MathType fields or OLE objects.
@@ -165,6 +166,7 @@ Treat any of these as a failed deliverable:
 - Remaining `{{MATH:...}}`, `{{EQREF:...}}`, or `equation reference goes here` text.
 - Non-sequential equation values starting from 1.
 - `Error! Reference source not found.`
+- A manifest equation whose MathType object holds untranslated TeX (red text) or an unmapped symbol (a diamond).
 
 ## Failure handling
 
@@ -173,7 +175,7 @@ Treat any of these as a failed deliverable:
 - If MathType fails to create or resolve `MTReference`, preserve the failed output only for diagnosis and do not present it as complete.
 - If the MCP watchdog reports a timeout, record `bridge_office_pids`, `isolated_office_processes_terminated`, `new_office_pids_left_running`, and the cleanup result, verify the warning preferences were restored (`%APPDATA%\MathTypeForWordAgent\warning-preferences.json` absent means the user's values are back; present means the next render, render-pptx, or configure-defaults call restores them when it takes the bridge lock), then retry only the smallest fixture once before escalating. For `render_mathtype_word_document`, these keys are in the `timeouts` list of the render result, successful or failed, or of `get_mathtype_render_status`; other tools report them at the top level. The watchdog terminates only Office processes the bridge logged as its own; it never terminates other new Word or PowerPoint windows.
 - A bridge killed before it finishes (with its MCP server, or by ending a background job's process, the `pid` in its status) skips its own cleanup. The next render, render-pptx, or configure-defaults call ends the hidden Word or PowerPoint that the killed run launched (unless it now shows a document window or a slide show) and restores the warning preferences when it takes the bridge lock.
-- If the requested TeX is outside MathType's supported conversion subset, simplify it, split it into supported expressions, or ask for a MathType-authored source equation.
+- If validation names untranslated TeX or a diamond, replace that command using [troubleshooting.md](references/troubleshooting.md#tex-that-toggle-tex-does-not-translate) and render again from the preserved input. When no supported form exists, split the expression or ask for a MathType-authored source equation.
 - Word COM is single-user desktop automation. Do not run two render jobs concurrently in the same Windows profile. The job runner refuses a second Word render job, and the MCP tools `render_mathtype_powerpoint_presentation` and `configure_mathtype_word_defaults` are refused while a Word render job is active. A direct `mathtype-word.ps1 -Action render-pptx` or `-Action configure-defaults` call is not checked: do not start one while `python scripts\mathtype_batch.py status --output <docx>` reports `queued` or `running`.
 
 ## Reference routing

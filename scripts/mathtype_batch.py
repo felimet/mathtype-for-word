@@ -42,7 +42,7 @@ from typing import Any, Callable
 
 
 DEFAULT_BATCH_SIZE = 40
-STATE_SCHEMA = "mathtype-for-word-job/2"
+STATE_SCHEMA = "mathtype-for-word-job/3"
 ACTIVE_STATES = ("queued", "running")
 RESUMABLE_STATES = ("queued", "running", "failed", "interrupted")
 CHUNK_BASE_TIMEOUT_SECONDS = int(os.environ.get("MATHTYPE_CHUNK_BASE_TIMEOUT_SECONDS", "120"))
@@ -329,6 +329,7 @@ def render(
             "equations_done": 0,
             "references_done": 0,
             "retries": 0,
+            "existing": None,
             **{key: [] for key in REPAIR_KEYS},
             "timeouts": [],
             "result": None,
@@ -376,6 +377,9 @@ def _run_chunks(
                 overwrite=overwrite,
                 partial_manifest=partial_manifest,
             )
+            # Earlier chunks' numbers are in this checkpoint; the input's own ones were counted by the first chunk.
+            if job.state.get("existing"):
+                arguments.update(job.state["existing"])
         else:
             arguments.update(output_path=str(next_checkpoint), overwrite=True, partial_manifest=True, anchor_numbers=True)
         job.log(
@@ -394,6 +398,8 @@ def _run_chunks(
                 "references_done": job.state.get("references_done", 0) + len(chunk["references"]),
                 **{key: [*job.state.get(key, []), *(result.get(key) or [])] for key in REPAIR_KEYS},
             }
+            if index == 0:
+                progress["existing"] = {key: result.get(key) for key in ("existing_number_fields", "existing_references")}
             job.log(
                 f"Chunk {index + 1} done in {time.monotonic() - started:.0f} s "
                 f"({progress['equations_done']}/{job.state['equations_total']} equations, "
@@ -417,7 +423,10 @@ def _run_chunks(
             job.save(
                 **progress,
                 status="completed",
-                result={key: value for key, value in summary.items() if key != "validation"},
+                # The report without its long lists: get_mathtype_render_status shows its warnings.
+                result={**{key: value for key, value in summary.items() if key != "validation"},
+                        "validation": {key: (summary.get("validation") or {}).get(key)
+                                       for key in ("ok", "counts", "equation_numbers", "errors", "warnings")}},
             )
             job.log("Job completed.")
             for leftover in [*job.dir.glob("chunk-*"), *job.dir.glob("checkpoint-*")]:

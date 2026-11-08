@@ -4,6 +4,51 @@ All notable changes to this project are recorded here. The format follows
 [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/). Each release also lists upgrade notes and known limitations.
 
+## [Unreleased]
+
+Validation catches equations that MathType did not translate, rendering into a document that already holds MathType
+numbers works, and the workflow drops a duplicate validation pass.
+
+### Added
+
+- Word validation reads the MTEF data of every saved `Equation.DSMT4` object. Toggle TeX keeps a TeX command it
+  cannot translate as red literal text and draws a symbol it cannot map as a diamond (U+FFFD), and before this
+  both passed every structural check. An equation of the manifest with either now fails validation with its id,
+  its TeX, and the untranslated command (for red text) or the number of diamonds. Objects are matched to the manifest through the TeX MathType stores in them,
+  which it trims and keeps in the ANSI code page for non-ASCII text. Other MathType objects only warn, unless a
+  render leaves more of them than its input held. Render validates before it publishes, so such an output is no
+  longer written. Reported in #8.
+- `references/troubleshooting.md` lists the commands that MathType 7.11.1.462 leaves untranslated (`\bm`,
+  `\widetilde`, `\lvert`, `\mathbfit`, `\widebar`, `\middle`, `\mathtt`, `\pmb`, `\coloneqq`, `\phantom`,
+  `\boxed`, `aligned`, `gathered`, `split`, ...) or draws as a diamond (`\Longrightarrow`, `\iff`, `\lceil`,
+  `\lfloor`, `\hookrightarrow`, `\mathbb{1}`, ...), with replacements checked on the same version in display and
+  inline equations. TeX that starts with a vertical bar creates no object at all. It also notes that Word's PDF
+  export drops an accent written around a bold command (`\tilde{\boldsymbol{M}}`); the skill now puts the accent
+  inside (`\boldsymbol{\tilde{M}}`).
+- The render result reports `existing_number_fields` and `existing_references`, the counts the input held, and
+  `validate_mathtype_word_document` accepts them.
+
+### Fixed
+
+- Adding equations to a document that already held MathType numbered equations or references failed unless
+  `partial_manifest` was set: validation expected exactly the manifest's numbers and references and counted the existing ones against it,
+  so nothing was published. Validation now expects the existing counts plus the manifest's. A batched render
+  takes the counts from its first chunk and passes them to its last chunk. Found while reproducing #10.
+- The eval fixtures used `\widetilde`, which renders as red text; they use `\tilde` now.
+- `get_mathtype_render_status` of a completed job now includes the validation report (counts, numbers, errors,
+  warnings), so a background render's warnings reach the agent.
+
+### Changed
+
+- The skill no longer calls `validate_mathtype_word_document` or `validate_mathtype_powerpoint_presentation`
+  after a successful render. Both renders already validate the saved file against the whole manifest before
+  they publish it and return that report, so the extra call only started Office again (about 7 s for a
+  9-object document, 9 s for 122 objects; `tests/TEST-REPORT.md`). The probe (about 5 s) runs once per task.
+
+### Upgrade notes
+
+- A render job started by an earlier version restarts from the beginning instead of resuming (job state schema 3).
+
 ## [1.4.2] - 2026-10-14
 
 Codex and Claude Code install the plugin from this repository's marketplace, and the repository has a security

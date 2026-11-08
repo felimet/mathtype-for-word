@@ -1,5 +1,75 @@
 # Test report
 
+## Unreleased: TeX translation check and existing numbers
+
+Date: 2026-11-08
+
+Host: Windows 11, Word 16.0, MathType 7.11.1.462, PowerShell 7.6.9, Python 3.13.14. Every render ran through the
+bridge in a hidden Word instance of its own while the user had another Word document open; that instance was left
+untouched.
+
+### TeX that Toggle TeX does not translate
+
+Probe sets were rendered with `main` 940fc37 (before the change) and inspected through the MTEF data of each saved
+object. MathType 7.11.1.462 sets CHAR option bit 0x80 on every character of an untranslated command (drawn red)
+and writes U+FFFD for a symbol it cannot map (drawn as a diamond). The first two sets also went through Word's
+`ExportAsFixedFormat` PDF, rasterized and read by eye; so did the accent cases of the final set. The final set's
+display environments and accents were also drawn from their WMF previews with GDI+, which is what Word shows on
+screen. Wherever two methods covered an object, they agreed on red text and diamonds.
+
+| Set | Objects | Red text | Diamond | `validate` on `main` |
+|---|---|---|---|---|
+| 35 commands from PR #8, display | 35 | `\bm`, `\widetilde`, `\lvert`/`\rvert`, `\mathbfit`, `\widebar`, `\middle` | `\Longrightarrow`, `\iff`, `\lceil`, `\longrightarrow` | `ok: true` |
+| Same 35 plus 50 common commands, inline | 85 | the six above plus `\mathtt`, `\pmb`, `\phantom`, `\boxed` | the four above plus `\hookrightarrow` and `\lfloor` in grouped equations | `ok: true` |
+| 50 common commands, display | 50 | as inline | as inline | `ok: true` |
+| Final set: 61 cases, each in display and inline | 122 | `aligned`, `gathered`, `split`, `\hphantom`, `\phantom`, `\fbox`, `\boxed`, `\coloneqq`, `\mathtt`, `\pmb` and the six above | `\longmapsto`, `\hookrightarrow`, `\lfloor`, `\lceil`, `\mathbb{1}`, `\Longrightarrow`, `\longrightarrow`, `\iff` | `ok: true` |
+
+The final set wrote every multi-row environment with a real `\\` row separator; the earlier sets did not, so
+their environment results are superseded. Display and inline gave the same result for every case. Two-row `cases`,
+`bmatrix`, `pmatrix`, `vmatrix`, `Vmatrix`, `array` and `\substack` showed neither problem, and the GDI+ drawing
+showed their rows. Every replacement in `references/troubleshooting.md` was in the final set and showed neither.
+`\operatorname`, `\text`, `\partial`, `\mathop`, `\limits`, `\nolimits` and `\left\|x\right\|` showed neither in
+the earlier sets, in both layouts. TeX whose first character is a vertical bar (`|x|`, display and inline,
+rendered alone) created no object, and render stopped with `Toggle TeX did not add exactly one MathType object`.
+
+With the change, rendering the final set fails in its first chunk and publishes nothing; the error names every
+failing equation, for example `Equation d_one_coloneqq, i_one_coloneqq (a\coloneqq b): MathType kept untranslated
+TeX as red text (\coloneqq).` A separate `validate` of the `main` output reports 24 errors, one per failing case, each naming its display and
+inline equation.
+
+### Accents on bold symbols
+
+`\tilde{\boldsymbol{M}}`, `\tilde{\mathbf{M}}`, `\hat{\boldsymbol{x}}` and `\hat{\mathbf{x}}` produce MTEF accent
+templates (selector 32 for the tilde), and the WMF preview draws the accent from MT Extra; GDI+ shows it. Word's PDF
+export left these four accents out. `\boldsymbol{\tilde{M}}`, `\mathbf{\tilde{M}}`, `\boldsymbol{\hat{x}}`,
+`\mathbf{\hat{x}}`, `\tilde{M}`, `\bar{\boldsymbol{x}}` and `\vec{\boldsymbol{x}}` kept their accents in the PDF.
+
+Validation matches a saved object to its manifest equation through the TeX MathType stores in it. MathType stores
+that TeX trimmed and, for non-ASCII text, in the ANSI code page: `\bm{\text{質量}}` was stored as the cp950 bytes
+`BD E8 B6 71` for `質量`, and `  \bm{y}  ` as `\bm{y}`. Before validation decoded and trimmed it, both rendered
+red and were published with `ok: true` and only a warning. Now all three red equations of that set (the two
+above and `a  +  \bm{z}`) fail validation, and nothing is published. As a second guard, a render whose output
+holds more such objects than its input did also fails on the ones it cannot match.
+
+A background job's `get_mathtype_render_status` result now carries the report: after the batched render below
+it read `ok: true`, numbers `[1, 2, 3]`, no warnings.
+
+### Rendering into a document that already holds MathType numbers
+
+Input: a rendered document with six MathType objects, one numbered display and one reference, plus new markers.
+
+| Case | `main` 940fc37 | With the change |
+|---|---|---|
+| One new inline equation, one session | fails: `Expected 0 native number fields; found 1.` | `ok: true`, existing 1 and 1, numbers `[1]` |
+| `\alpha_k` inline and two numbered displays plus two references, `--batch-size 2` (3 chunks) | fails in the last chunk the same way | `ok: true`, existing 1 and 1, numbers `[1, 2, 3]`, 3 references |
+
+In both outputs the six existing objects kept byte-identical `Equation Native` streams.
+
+### Timing
+
+Each with `Measure-Command`, twice: a separate `validate` took 6.8 and 6.9 s on the 9-object batched output and
+9.1 s twice on the 122-object set; render had already returned the same report. `probe` took 6.0 and 4.8 s.
+
 ## 1.4.2
 
 Date: 2026-10-14

@@ -6,6 +6,8 @@
 | MathType executable or template missing | MathType or Word add-in is not installed | Repair MathType and enable its Word support. |
 | `equation_dsmt4_registered` is false | MathType OLE registration is broken | Run MathType repair as the same Windows user. |
 | Toggle TeX creates no object | Unsupported delimiter/TeX, add-in not loaded, or interactive dialog | Use one-line portable TeX; confirm `$...$` for inline and `\[...\]` for display; inspect Word add-ins. |
+| Validation names an equation that `kept untranslated TeX as red text` or `drew … unmapped symbol(s) as a diamond` | Toggle TeX accepted TeX it cannot translate; the object exists and every structural check passes | Replace the command with a form from [TeX that Toggle TeX does not translate](#tex-that-toggle-tex-does-not-translate) and render again from the preserved input. |
+| Toggle TeX creates no object for TeX that starts with a vertical bar | MathType 7.11.1.462 converts no TeX whose first character is a vertical bar | See [TeX that Toggle TeX does not translate](#tex-that-toggle-tex-does-not-translate). |
 | Toggle TeX creates Word OMath | Word conversion was used instead of MathType | Remove the OMath result and rerun through `MTCommand_TeXToggle`. |
 | Number is `(1.1)` | Existing MathType format includes section number | Render through the bridge; it removes current `MTSec`/`MTChap` components while preserving `MTPlaceRef`. |
 | `MTReference` remains | The target `MTPlaceRef` action did not complete | Do not type over it; retry against a native numbered equation. |
@@ -25,6 +27,38 @@
 | `PowerShell 7 is missing, so mathtype-for-word is installing` (`powershell.status: installing`) | No PowerShell 7 was found, and the server is downloading the official release for the current user | Tell the user, wait about a minute, and call the same tool again. The install continues between calls; a second server waits for the first instead of downloading again. The call after it finishes returns `powershell.status: installed` with a `notice` for the user; call once more. |
 | `installing it automatically failed` (`powershell.status: failed`) | The download is blocked (offline, a proxy or TLS inspection, GitHub unreachable), or a check failed: the SHA-256 differs from the hash pinned in `scripts/ensure-pwsh.ps1`, `pwsh.exe` is not validly signed by Microsoft, or application control blocks programs in the user profile | Report the error text. Ask the user to install PowerShell 7 with the MSI installer (`winget install --id Microsoft.PowerShell --source winget --installer-type wix`, administrator rights), then restart the agent. The next tool call retries the automatic install and reuses a download that passed the SHA-256 check (kept in `%USERPROFILE%\.mathtype-for-word\PowerShell\.cache`). Under an execution policy that allows only signed scripts in Windows PowerShell, the installer cannot run at all. |
 | MCP server emits parse errors | A launcher/log wrote to stdout | Protocol output must be JSON only; keep diagnostics on stderr. |
+
+## TeX that Toggle TeX does not translate
+
+Toggle TeX does not reject TeX it cannot translate. It keeps an unknown command as red literal text, or draws a symbol it cannot map as a diamond, and the object passes every structural check. Validation reads the saved objects and rejects such an equation, naming its id and TeX, and for red text the untranslated command (for a diamond, only how many). Every row and every replacement below was measured on MathType 7.11.1.462 with Word 16.0 in both display and inline equations (`tests/TEST-REPORT.md`); other versions may differ, so trust the validation result over this table.
+
+| Command | Result | Use instead |
+|---|---|---|
+| `\bm{x}`, `\mathbfit{x}`, `\pmb{x}` | red text | `\boldsymbol{x}`; `\mathbf{x}` for upright bold vectors |
+| `\widetilde{x}` | red text | `\tilde{x}`; for a bold symbol `\boldsymbol{\tilde{M}}` (see the PDF note below) |
+| `\widebar{x}` | red text | `\bar{x}` or `\overline{x}` |
+| `\lvert`, `\rvert`, `\middle` | red text | see the list below |
+| `\mathtt{x}` | red text | `\texttt{x}` |
+| `\coloneqq` | red text | `:=` |
+| `\phantom{x}`, `\hphantom{x}` | red text | spacing commands such as `\quad` or `\,` |
+| `\boxed{x}`, `\fbox{x}` | red text | none; frame the equation in Word if required |
+| `aligned`, `gathered`, `split` environments | red text | one display equation per line |
+| `\Longrightarrow`, `\longrightarrow`, `\iff` | diamond | `\Rightarrow`, `\rightarrow` or `\to`, `\Leftrightarrow` |
+| `\lceil x\rceil`, `\lfloor x\rfloor` | diamond | `\left\lceil x\right\rceil`, `\left\lfloor x\right\rfloor` |
+| `\longmapsto`, `\hookrightarrow` | diamond | `\mapsto`, `\rightarrow` |
+| `\mathbb{1}` | diamond | `\mathbf{1}` |
+
+Vertical bars, kept out of the table because Markdown reads them as cell borders:
+
+- `\lvert x\rvert` (red text): use `\left|x\right|`.
+- `\left(a\middle|b\right)` (red text): use `\left(a\mid b\right)`.
+- TeX whose first character is a vertical bar, such as `|x|`, creates no object at all, and render stops with `Toggle TeX did not add exactly one MathType object`. Start it with `\left|x\right|`; `y=|x|` converts.
+
+These produce neither red text nor a diamond on 7.11.1.462 and need no substitute: `\operatorname`, `\operatorname*`, `\text`, `\textbf`, `\partial`, `\mathop`, `\limits`, `\nolimits`, `\left\|x\right\|`, `\left\lVert x\right\rVert`, `\langle`, `\mapsto`, `\triangleq`, `\overset`, `\underbrace`, `\xrightarrow`, `\boldsymbol`, `\mathscr`, `\mathfrak`, and the two-row environments `cases`, `bmatrix`, `pmatrix`, `vmatrix`, `Vmatrix`, `array` and `\substack`. Their layout still needs a visual check; for example, `\|x\|` and `\lVert x\rVert` draw two separate bars, where `\left\|x\right\|` and `\left\lVert x\right\rVert` draw a fused norm.
+
+### Accents on bold symbols in Word's PDF export
+
+An accent written around a bold command (`\tilde{\boldsymbol{M}}`, `\tilde{\mathbf{M}}`, `\hat{\boldsymbol{x}}`, `\hat{\mathbf{x}}`) becomes a wide-accent template. Word shows and saves it, but Word 16.0's PDF export (`ExportAsFixedFormat`) leaves the accent out, so the PDF shows a bare **M** or **x**. Validation cannot see this. Put the accent inside the bold command instead: `\boldsymbol{\tilde{M}}`, `\mathbf{\tilde{M}}`, `\boldsymbol{\hat{x}}` and `\mathbf{\hat{x}}` keep their accent in the PDF. `\bar` and `\vec` around a bold command kept theirs.
 
 ## Recovery rules
 
