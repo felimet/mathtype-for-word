@@ -45,6 +45,9 @@ class FakeBridge:
         # Assert-Manifest and Find-AnchoredNumberField: MathType places a reference by clicking its target's
         # number, converted in this session or anchored by an earlier one.
         document = json.loads(Path(arguments["input_path"]).read_text(encoding="utf-8"))
+        # Invoke-Render: numbers and references the input already holds, unless the job passes the first chunk's.
+        existing = {"existing_number_fields": arguments.get("existing_number_fields", document["numbers"]),
+                    "existing_references": arguments.get("existing_references", document["references"])}
         numbered = {equation["id"] for equation in part["equations"] if equation.get("numbered")}
         reachable = numbered | (set(part.get("external_targets", [])) & set(document["anchors"]))
         missing = [reference["target"] for reference in part["references"] if reference["target"] not in reachable]
@@ -60,7 +63,8 @@ class FakeBridge:
         document["anchors"] = sorted(set(document["anchors"]) | numbered) if arguments.get("anchor_numbers") else []
         check = json.loads(Path(arguments.get("validation_manifest_path") or arguments["manifest_path"]).read_text(encoding="utf-8"))
         expected_numbers = sum(1 for equation in check["equations"] if equation.get("numbered"))
-        expected_references = len(check.get("references") or [])
+        expected_numbers += existing["existing_number_fields"]
+        expected_references = len(check.get("references") or []) + existing["existing_references"]
         partial = bool(arguments.get("partial_manifest"))
         errors = []
         if partial:
@@ -77,7 +81,7 @@ class FakeBridge:
         if output.exists() and not arguments.get("overwrite"):
             return {"ok": False, "error": "OutputPath already exists."}
         output.write_text(json.dumps(document), encoding="utf-8")
-        return {"ok": True, "action": "render", "validation": {"ok": True},
+        return {"ok": True, "action": "render", "validation": {"ok": True}, **existing,
                 "line_spacing_changed_for": [equation["id"] for equation in part["equations"]],
                 "row_height_changed_for": [equation["id"] for equation in part["equations"] if equation["id"] == "e2"]}
 
@@ -154,7 +158,21 @@ class BatchTests(unittest.TestCase):
         self.assertEqual(state["pid_started"], mathtype_batch.process_started(os.getpid()))
         status = mathtype_batch.status(str(self.output), cleanup=True)
         self.assertEqual(status["status"], "completed")
+        self.assertTrue(status["result"]["validation"]["ok"])  # a background job's report, warnings included
         self.assertTrue(status["cleaned_up"])
+
+    def test_numbers_and_references_already_in_the_input_are_expected_by_the_final_validation(self) -> None:
+        # Adding equations to a document that already holds MathType numbers once failed every render.
+        document = json.loads(self.source.read_text(encoding="utf-8"))
+        document.update(numbers=2, references=1)
+        self.source.write_text(json.dumps(document), encoding="utf-8")
+        bridge = FakeBridge()
+        result = self.render(bridge)
+        self.assertTrue(result["ok"], result)
+        self.assertNotIn("existing_number_fields", bridge.calls[0])
+        self.assertEqual((bridge.calls[-1]["existing_number_fields"], bridge.calls[-1]["existing_references"]), (2, 1))
+        published = json.loads(self.output.read_text(encoding="utf-8"))
+        self.assertEqual((published["numbers"], published["references"]), (5, 2))
 
     def test_failed_final_validation_publishes_nothing(self) -> None:
         bridge = FakeBridge(fail={3: "Generated DOCX validation failed: Equation numbers are not sequential"})

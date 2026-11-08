@@ -19,7 +19,12 @@ param(
     # the last, which removes the bookmarks).
     [switch]$AnchorNumbers,
     # JSON list of exact text spans to replace with markers (mark).
-    [string]$MarksPath
+    [string]$MarksPath,
+    # Native number fields and references the input document held before the render. render counts them when it
+    # opens (-1); a batched render passes the first chunk's counts to its last chunk, whose input holds earlier
+    # chunks; validate takes a render's reported counts (default 0).
+    [int]$ExistingNumberFields = -1,
+    [int]$ExistingReferences = -1
 )
 
 Set-StrictMode -Version Latest
@@ -70,6 +75,13 @@ $script:AnchorPrefix = '_MTEq'
 # Word draws an exactly spaced line at its nominal height; allow rounding before calling an object clipped.
 $script:LineSpacingTolerancePoints = 0.5
 $script:LineSpacingRepairs = [System.Collections.Generic.List[string]]::new()
+# Numbers and references from before this render: validation expects them plus the manifest's.
+$script:BaselineNumberFields = 0
+$script:BaselineReferences = 0
+# Objects with untranslated TeX or diamonds in a render's input; -1 outside a render.
+$script:BaselineTranslationProblems = -1
+# The local file Word opened: FullName is an https URL for a OneDrive or SharePoint folder.
+$script:DocumentLocalPath = $null
 $script:AutomationPollMilliseconds = 250
 $script:AutomationTimeoutMilliseconds = if ($env:MATHTYPE_AUTOMATION_TIMEOUT_MS) {
     [int]$env:MATHTYPE_AUTOMATION_TIMEOUT_MS
@@ -99,6 +111,11 @@ using System;
 using System.Runtime.InteropServices.ComTypes;
 using System.Text;
 using System.Runtime.InteropServices;
+public sealed class MathTypeEquationData {
+    public string Tex;
+    public string Untranslated = "";
+    public int ReplacementCharacters;
+}
 public static class MathTypeOleData {
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     private static extern uint RegisterClipboardFormat(string format);
@@ -151,6 +168,198 @@ public static class MathTypeOleData {
             finally { ReleaseStgMedium(ref medium); }
         }
         throw new InvalidOperationException("MathType OLE object exposes no readable MathML format.");
+    }
+
+    // Offline view of a Word-embedded MathType object: the "Equation Native" stream of its [MS-CFB] file holds a
+    // 28-byte header and MTEF 5 data. Returns null when the file holds no MathType equation. Throws on malformed data.
+    public static MathTypeEquationData InspectEmbeddedEquation(byte[] file) {
+        byte[] native = ReadCompoundStream(file, "Equation Native");
+        if (native == null || native.Length < 34 || native[28] != 5) return null;
+        MathTypeEquationData result = new MathTypeEquationData();
+        new MtefWalker(native, 28, result).Run();
+        return result;
+    }
+
+    [DllImport("kernel32.dll")]
+    private static extern uint GetACP();
+
+    // MathType stores the TeX trimmed and, for non-ASCII text, in the ANSI code page rather than UTF-8.
+    private static string DecodeAnnotation(byte[] data, int start, int count) {
+        try { return new UTF8Encoding(false, true).GetString(data, start, count); }
+        catch (DecoderFallbackException) {
+            try { return Encoding.GetEncoding((int)GetACP()).GetString(data, start, count); }
+            catch (Exception) { return Encoding.GetEncoding(28591).GetString(data, start, count); }
+        }
+    }
+
+    private static byte[] ReadCompoundStream(byte[] data, string name) {
+        if (data.Length < 512 || BitConverter.ToUInt64(data, 0) != 0xE11AB1A1E011CFD0UL) return null;
+        int sectorSize = 1 << BitConverter.ToUInt16(data, 30);
+        int miniSectorSize = 1 << BitConverter.ToUInt16(data, 32);
+        int fatSectors = BitConverter.ToInt32(data, 44);
+        uint directoryStart = BitConverter.ToUInt32(data, 48);
+        uint miniCutoff = BitConverter.ToUInt32(data, 56);
+        uint miniFatStart = BitConverter.ToUInt32(data, 60);
+        uint difatNext = BitConverter.ToUInt32(data, 68);
+        var fatSectorList = new System.Collections.Generic.List<uint>();
+        for (int i = 0; i < 109 && fatSectorList.Count < fatSectors; i++) fatSectorList.Add(BitConverter.ToUInt32(data, 76 + 4 * i));
+        for (int guard = 0; difatNext < 0xFFFFFFFA && fatSectorList.Count < fatSectors && guard < data.Length / sectorSize; guard++) {
+            int offset = checked((int)((difatNext + 1) * sectorSize));
+            for (int i = 0; i < sectorSize / 4 - 1 && fatSectorList.Count < fatSectors; i++) fatSectorList.Add(BitConverter.ToUInt32(data, offset + 4 * i));
+            difatNext = BitConverter.ToUInt32(data, offset + sectorSize - 4);
+        }
+        var fat = new System.Collections.Generic.List<uint>();
+        foreach (uint sector in fatSectorList) {
+            int offset = checked((int)((sector + 1) * sectorSize));
+            for (int i = 0; i < sectorSize / 4; i++) fat.Add(BitConverter.ToUInt32(data, offset + 4 * i));
+        }
+        Func<uint, int, byte[]> readChain = (start, max) => {
+            var bytes = new System.IO.MemoryStream();
+            for (uint sector = start; sector < 0xFFFFFFFA && bytes.Length < max; sector = fat[(int)sector]) {
+                if (bytes.Length > data.Length) throw new InvalidOperationException("Compound file sector chain loops.");
+                bytes.Write(data, checked((int)((sector + 1) * sectorSize)), sectorSize);
+            }
+            return bytes.ToArray();
+        };
+        byte[] directory = readChain(directoryStart, int.MaxValue);
+        byte[] miniStream = null;
+        for (int entry = 0; entry + 128 <= directory.Length; entry += 128) {
+            int nameLength = BitConverter.ToUInt16(directory, entry + 64);
+            byte type = directory[entry + 66];
+            uint start = BitConverter.ToUInt32(directory, entry + 116);
+            int size = checked((int)BitConverter.ToUInt32(directory, entry + 120));
+            if (type == 5) { miniStream = readChain(start, size); continue; }
+            if (type != 2 || nameLength < 2) continue;
+            if (Encoding.Unicode.GetString(directory, entry, nameLength - 2) != name) continue;
+            if ((uint)size >= miniCutoff) {
+                byte[] full = readChain(start, size);
+                Array.Resize(ref full, size);
+                return full;
+            }
+            byte[] miniFat = readChain(miniFatStart, int.MaxValue);
+            var stream = new System.IO.MemoryStream();
+            for (uint sector = start; sector < 0xFFFFFFFA && stream.Length < size; sector = BitConverter.ToUInt32(miniFat, checked((int)sector * 4))) {
+                stream.Write(miniStream, checked((int)sector * miniSectorSize), miniSectorSize);
+            }
+            byte[] small = stream.ToArray();
+            Array.Resize(ref small, size);
+            return small;
+        }
+        return null;
+    }
+
+    // Walks every MTEF 5 record (Design Science MTEF 5 specification). MathType 7.11 marks the characters of a TeX
+    // command that Toggle TeX could not translate with CHAR option 0x80 (drawn as red text) and writes a symbol it
+    // could not map as U+FFFD (drawn as a diamond); measured on MathType 7.11.1.462.
+    private sealed class MtefWalker {
+        private readonly byte[] b;
+        private int i;
+        private readonly MathTypeEquationData result;
+        private readonly StringBuilder untranslated = new StringBuilder();
+        public MtefWalker(byte[] data, int start, MathTypeEquationData output) { b = data; i = start; result = output; }
+        private int U8() { return b[i++]; }
+        private int U16() { int v = b[i] | (b[i + 1] << 8); i += 2; return v; }
+        private int Uint() { int v = U8(); return v == 0xFF ? U16() : v; }
+        private string CString() {
+            int end = Array.IndexOf(b, (byte)0, i);
+            if (end < 0) throw new InvalidOperationException("Unterminated MTEF string.");
+            string value = Encoding.GetEncoding(28591).GetString(b, i, end - i);
+            i = end + 1;
+            return value;
+        }
+        private void Nudge(int options) {
+            if ((options & 0x08) == 0) return;
+            int dx = U8(), dy = U8();
+            if (dx == 128 && dy == 128) i += 4;
+        }
+        private void Ruler() { i += 3 * U8(); }
+        private void Dimensions(int count) {
+            bool high = true;
+            for (int found = 0; found < count;) {
+                int nibble = high ? b[i] >> 4 : b[i] & 15;
+                if (!high) i++;
+                high = !high;
+                if (nibble == 15) found++;
+            }
+            if (!high) i++;
+        }
+        public void Run() {
+            i += 5;  // version, platform, product, product version, product subversion
+            CString();  // application key
+            i++;  // equation options
+            Records();
+            result.Untranslated = untranslated.ToString();
+        }
+        private int depth;
+        private void Records() {
+            if (++depth > 200) throw new InvalidOperationException("MTEF records nest too deeply.");
+            try { RecordList(); } finally { depth--; }
+        }
+        private void RecordList() {
+            while (i < b.Length) {
+                int tag = U8();
+                int options;
+                switch (tag) {
+                    case 0: return;
+                    case 1:  // LINE
+                        options = U8(); Nudge(options);
+                        if ((options & 0x04) != 0) U16();
+                        if ((options & 0x02) != 0) { if (U8() != 7) throw new InvalidOperationException("LINE ruler expected."); Ruler(); }
+                        if ((options & 0x01) == 0) Records();
+                        break;
+                    case 2:  // CHAR
+                        options = U8(); Nudge(options); U8();
+                        int code = (options & 0x20) == 0 ? U16() : -1;
+                        if ((options & 0x04) != 0) U8();
+                        if ((options & 0x10) != 0) U16();
+                        if ((options & 0x80) != 0 && code >= 0) untranslated.Append((char)code);
+                        if (code == 0xFFFD) result.ReplacementCharacters++;
+                        if ((options & 0x01) != 0) Records();
+                        break;
+                    case 3:  // TMPL
+                        options = U8(); Nudge(options); U8();
+                        if ((U8() & 0x80) != 0) U8();
+                        U8(); Records();
+                        break;
+                    case 4:  // PILE
+                        options = U8(); Nudge(options); U8(); U8();
+                        if ((options & 0x02) != 0) { if (U8() != 7) throw new InvalidOperationException("PILE ruler expected."); Ruler(); }
+                        Records();
+                        break;
+                    case 5:  // MATRIX
+                        options = U8(); Nudge(options); i += 3;
+                        int rows = U8(), columns = U8();
+                        i += ((rows + 1) * 2 + 7) / 8 + ((columns + 1) * 2 + 7) / 8;
+                        Records();
+                        break;
+                    case 6: options = U8(); Nudge(options); U8(); break;  // EMBELL
+                    case 7: Ruler(); break;
+                    case 8: Uint(); U8(); break;  // FONT_STYLE_DEF
+                    case 9:  // SIZE
+                        int size = U8();
+                        if (size == 101) U16(); else if (size == 100) { U8(); U16(); } else U8();
+                        break;
+                    case 10: case 11: case 12: case 13: case 14: break;  // FULL, SUB, SUB2, SYM, SUBSYM
+                    case 15: Uint(); break;  // COLOR
+                    case 16: options = U8(); i += (options & 0x01) != 0 ? 8 : 6; if ((options & 0x04) != 0) CString(); break;
+                    case 17: Uint(); CString(); break;  // FONT_DEF
+                    case 18:  // EQN_PREFS
+                        U8(); Dimensions(U8()); Dimensions(U8());
+                        for (int style = U8(); style > 0; style--) { if (U8() != 0) U8(); }
+                        break;
+                    case 19: CString(); break;  // ENCODING_DEF
+                    default:
+                        if (tag < 100) throw new InvalidOperationException("Unknown MTEF record " + tag + ".");
+                        int length = Uint();
+                        const string annotation = "TeX Input Language\0";
+                        if (length > annotation.Length && Encoding.GetEncoding(28591).GetString(b, i, annotation.Length) == annotation) {
+                            result.Tex = DecodeAnnotation(b, i + annotation.Length, length - annotation.Length).TrimEnd('\0');
+                        }
+                        i += length;
+                        break;
+                }
+            }
+        }
     }
 }
 '@
@@ -386,6 +595,7 @@ function Start-Word {
     $script:Word.Visible = $false
     $script:WordOriginalAlerts = $script:Word.DisplayAlerts
     $script:Word.DisplayAlerts = 0
+    $script:DocumentLocalPath = $DocumentPath
     if ([string]::IsNullOrWhiteSpace($DocumentPath)) {
         $script:Document = $script:Word.Documents.Add()
     }
@@ -1844,10 +2054,14 @@ function Invoke-Render {
     }
     $repairExactHeights = [string]$manifest.exact_line_spacing -eq 'at_least'
     $numberFields = @{}
+    $script:BaselineTranslationProblems = @((Get-TexTranslationProblems -Path $input).Problems).Count
     Set-TemporaryMathTypePreferences
     try {
         Start-Word -DocumentPath $input
         Write-Log -Level INFO -Message "Opened input DOCX: $input"
+        $existing = Get-NativeFieldCounts
+        $script:BaselineNumberFields = if ($ExistingNumberFields -ge 0) { $ExistingNumberFields } else { $existing.numbers }
+        $script:BaselineReferences = if ($ExistingReferences -ge 0) { $ExistingReferences } else { $existing.references }
         foreach ($equation in @($manifest.equations)) {
             $numberField = Convert-Equation -Equation $equation -RepairExactHeights:$repairExactHeights -AnchorNumber:$AnchorNumbers
             if ($null -ne $numberField) {
@@ -1880,12 +2094,102 @@ function Invoke-Render {
         equations = @($manifest.equations).Count
         numbered_equations = @($manifest.equations | Where-Object numbered).Count
         references = @($manifest.references).Count
+        existing_number_fields = $script:BaselineNumberFields
+        existing_references = $script:BaselineReferences
         number_format = '(1), (2), (3), ...'
         reference_mechanism = 'MathType-native GOTOBUTTON/REF fields'
         line_spacing_changed_for = @($script:LineSpacingRepairs)
         row_height_changed_for = @($script:RowHeightRepairs)
         validation = $validation
     })
+}
+
+function Get-NativeFieldCounts {
+    $counts = @{ numbers = 0; references = 0 }
+    for ($index = 1; $index -le $script:Document.Fields.Count; $index++) {
+        $field = $script:Document.Fields.Item($index)
+        $code = $field.Code.Text
+        if ($code -match '^\s*MACROBUTTON\s+MTPlaceRef\b') { $counts.numbers++ }
+        elseif ($code -match '^\s*GOTOBUTTON\s+ZEqnNum\d+\b') { $counts.references++ }
+        Release-ComObject $field
+    }
+    return $counts
+}
+
+function Get-TexTranslationProblems {
+    # Toggle TeX does not fail on TeX it cannot translate: it keeps an unknown command as red literal text and draws
+    # an unmapped symbol as a diamond, and both pass every structural check. The saved objects' MTEF data records
+    # both. Returns one entry per such object, plus the number of embedded objects that could not be read.
+    param([Parameter(Mandatory)][string]$Path)
+    $problems = [System.Collections.Generic.List[object]]::new()
+    $unreadable = 0
+    try {
+        $stream = [IO.File]::Open($Path, 'Open', 'Read', 'ReadWrite')
+        try {
+            $package = [IO.Compression.ZipArchive]::new($stream, 'Read')
+            foreach ($entry in $package.Entries) {
+                if ($entry.FullName -notmatch '^word/embeddings/[^/]+\.bin$') { continue }
+                $buffer = [IO.MemoryStream]::new()
+                $entryStream = $entry.Open()
+                try { $entryStream.CopyTo($buffer) } finally { $entryStream.Dispose() }
+                try { $data = [MathTypeOleData]::InspectEmbeddedEquation($buffer.ToArray()) }
+                catch { $unreadable++; continue }
+                if ($null -eq $data -or ($data.Untranslated.Length -eq 0 -and $data.ReplacementCharacters -eq 0)) { continue }
+                $text = @()
+                if ($data.Untranslated.Length -gt 0) { $text += "kept untranslated TeX as red text ($($data.Untranslated.Trim()))" }
+                if ($data.ReplacementCharacters -gt 0) { $text += "drew $($data.ReplacementCharacters) unmapped symbol(s) as a diamond" }
+                $problems.Add([pscustomobject]@{ Tex = [string]$data.Tex; Text = $text -join ' and ' })
+            }
+        }
+        finally { $stream.Dispose() }
+    }
+    catch {
+        Write-Log -Level WARN -Message "Could not inspect the MathType objects of ${Path}: $($_.Exception.Message)"
+        return [pscustomobject]@{ Problems = @(); Unreadable = -1 }
+    }
+    return [pscustomobject]@{ Problems = @($problems); Unreadable = $unreadable }
+}
+
+function Add-TexTranslationIssues {
+    # Equations of this manifest (matched by the TeX MathType stores in the object) fail the validation; other
+    # objects only warn, unless a render produced more such objects than its input held
+    # ($script:BaselineTranslationProblems, -1 when unknown): then the unmatched ones fail too, because MathType
+    # stores the TeX trimmed and in the ANSI code page, so a match can miss.
+    param($Manifest, [Parameter(Mandatory)]$Errors, [Parameter(Mandatory)]$Warnings)
+    if ([string]::IsNullOrWhiteSpace($script:DocumentLocalPath)) { return }
+    $manifestIds = @{}
+    if ($null -ne $Manifest) {
+        foreach ($equation in @($Manifest.equations)) {
+            $key = ([string]$equation.tex).Trim()
+            $manifestIds[$key] = @($manifestIds[$key] | Where-Object { $_ }) + [string]$equation.id
+        }
+    }
+    $inspection = Get-TexTranslationProblems -Path $script:DocumentLocalPath
+    if ($inspection.Unreadable -lt 0) {
+        $Warnings.Add('The MathType objects could not be inspected for untranslated TeX; check the equations visually.')
+        return
+    }
+    if ($inspection.Unreadable -gt 0) { $Warnings.Add("$($inspection.Unreadable) embedded object(s) could not be inspected for untranslated TeX.") }
+    $unmatched = @()
+    foreach ($problem in $inspection.Problems) {
+        $key = $problem.Tex.Trim()
+        if ($manifestIds.ContainsKey($key)) {
+            # Equations sharing one TeX give one message.
+            $message = "Equation $($manifestIds[$key] -join ', ') ($key): MathType $($problem.Text). Replace the command with a supported one (references/troubleshooting.md)."
+            if (-not $Errors.Contains($message)) { $Errors.Add($message) }
+        }
+        else { $unmatched += $problem }
+    }
+    $matched = $inspection.Problems.Count - $unmatched.Count
+    $new = $inspection.Problems.Count - $script:BaselineTranslationProblems
+    $unmatchedAreNew = $script:BaselineTranslationProblems -ge 0 -and $new -gt $matched
+    foreach ($problem in $unmatched) {
+        $tex = if ($problem.Tex) { $problem.Tex } else { 'unknown' }
+        if ($unmatchedAreNew) {
+            $Errors.Add("This render left more MathType objects with translation problems than its input had; a MathType object (TeX: $tex) $($problem.Text). Replace the command with a supported one (references/troubleshooting.md).")
+        }
+        else { $Warnings.Add("A MathType object (TeX: $tex) outside the manifest $($problem.Text).") }
+    }
 }
 
 function Get-ValidationReport {
@@ -1987,6 +2291,8 @@ function Get-ValidationReport {
         $expectedObjects = @($Manifest.equations).Count
         $expectedNumbers = @($Manifest.equations | Where-Object numbered).Count
         $expectedReferences = @($Manifest.references).Count
+        $expectedNumbers += $script:BaselineNumberFields
+        $expectedReferences += $script:BaselineReferences
         if ($mathTypeObjects -lt $expectedObjects) { $errors.Add("Expected at least $expectedObjects MathType objects; found $mathTypeObjects.") }
         if ($PartialManifest) {
             # Equations and references outside a partial manifest (earlier batches) may already exist.
@@ -2005,6 +2311,7 @@ function Get-ValidationReport {
         }
     }
     else { $warnings.Add('No manifest supplied; expected counts and exact markers were not checked.') }
+    Add-TexTranslationIssues -Manifest $Manifest -Errors $errors -Warnings $warnings
 
     return [ordered]@{
         ok = $errors.Count -eq 0
@@ -2031,6 +2338,9 @@ function Invoke-Validate {
         $manifest = Read-Manifest -Path $ManifestPath
         Assert-Manifest -Manifest $manifest
     }
+    # A render's existing_number_fields and existing_references: the counts its input held before it.
+    $script:BaselineNumberFields = [Math]::Max(0, $ExistingNumberFields)
+    $script:BaselineReferences = [Math]::Max(0, $ExistingReferences)
     try {
         Start-Word -ReadOnly -DocumentPath $input
         $script:Document.Fields.Update() | Out-Null

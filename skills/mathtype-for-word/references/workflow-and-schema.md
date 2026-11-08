@@ -176,11 +176,12 @@ Avoid:
 
 ## Output contract
 
-A successful render response reports paths and counts. It does not replace validation. A valid output must return `ok: true` from validation with:
+A successful render response reports paths and counts, the numbers and references the input already held (`existing_number_fields`, `existing_references`), and `validation`: the report on the saved file, taken before the output was published. A render whose `validation` is not `ok: true` publishes nothing. Use `validate_mathtype_word_document` to re-check a document changed later, passing the same manifest and the two existing counts. A valid output has:
 
 - MathType object count at least equal to manifest equation count.
-- Native number count equal to numbered equation count.
-- Native reference count equal to manifest reference count.
+- Native number count equal to the existing numbers plus the numbered equation count.
+- Native reference count equal to the existing references plus the manifest reference count.
+- No manifest equation whose object holds untranslated TeX (red text) or an unmapped symbol (a diamond).
 - Sequential equation values beginning at 1.
 - No unresolved markers or placeholders.
 - No Word OMath objects under strict MathType output.

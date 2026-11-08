@@ -24,6 +24,7 @@ mathtype-for-word-workspace/
 # Generated Word outputs are ignored except committed eval inputs.
 *.docx
 !evals/fixtures/*.docx
+!tests/fixtures/*.docx
 
 # Keep release artifacts while ignoring unrelated distribution files.
 *.skill

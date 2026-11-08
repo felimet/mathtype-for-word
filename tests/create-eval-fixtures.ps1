@@ -157,8 +157,8 @@ try {
         -Title '偏折角公式自動分類草稿' -FontName '新細明體' -Paragraphs @(
             '量測雜訊變異數 [[MATH id=measurement_variance tex=\sigma_v^2]] 用於描述重複量測的離散程度，其單位為 rad^2。',
             '扣除系統偏移量後的校正量可表示如下：',
-            '[[MATH id=offset_correction tex=\widetilde{y}_i = y_i - b]]',
-            '其中，y_i 為第 i 個取樣位置之原始量測值，單位為 rad；b 為系統偏移量，單位為 rad；\widetilde{y}_i 為校正後量測值，單位為 rad；i 為無因次取樣位置索引。',
+            '[[MATH id=offset_correction tex=\tilde{y}_i = y_i - b]]',
+            '其中，y_i 為第 i 個取樣位置之原始量測值，單位為 rad；b 為系統偏移量，單位為 rad；\tilde{y}_i 為校正後量測值，單位為 rad；i 為無因次取樣位置索引。',
             '單一取樣位置的偏折角增量可由下列模型求得：',
             '[[MATH id=local_deflection tex=\Delta \theta_{y,i} = K_i \Delta n_i]]',
             '其中，\Delta \theta_{y,i} 為第 i 個取樣位置在 y 方向之偏折角增量，單位為 rad；K_i 為第 i 個位置之靈敏度係數，單位為 rad；\Delta n_i 為無因次折射率差；i 為無因次取樣位置索引。',
@@ -174,8 +174,8 @@ try {
         -Title 'Automatic Equation Classification Draft' -FontName 'Times New Roman' -Paragraphs @(
             'The measurement-noise variance [[MATH id=measurement_variance tex=\sigma_v^2]] describes repeatability and has units of rad^2.',
             'The offset-corrected measurement is expressed as follows:',
-            '[[MATH id=offset_correction tex=\widetilde{y}_i = y_i - b]]',
-            'where y_i is the raw value at sample i in rad, b is the systematic offset in rad, \widetilde{y}_i is the corrected value in rad, and i is a dimensionless sample index.',
+            '[[MATH id=offset_correction tex=\tilde{y}_i = y_i - b]]',
+            'where y_i is the raw value at sample i in rad, b is the systematic offset in rad, \tilde{y}_i is the corrected value in rad, and i is a dimensionless sample index.',
             'The local deflection-angle increment is obtained from the following model:',
             '[[MATH id=local_deflection tex=\Delta \theta_{y,i} = K_i \Delta n_i]]',
             'where \Delta \theta_{y,i} is the y-direction deflection-angle increment at sample i in rad, K_i is the sensitivity coefficient at sample i in rad, \Delta n_i is the dimensionless refractive-index difference, and i is a dimensionless sample index.',

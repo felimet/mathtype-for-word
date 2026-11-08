@@ -135,13 +135,17 @@ class TimeoutCleanupTests(unittest.TestCase):
         done = subprocess.CompletedProcess([], 0, stdout='{"ok": true}\n', stderr="")
         with mock.patch.object(mcp_server, "_run_bridge", return_value=done) as run:
             mcp_server._invoke_bridge("render", {"partial_manifest": True, "anchor_numbers": True,
-                                                 "validation_manifest_path": "C:\\m.json"})
+                                                 "validation_manifest_path": "C:\\m.json",
+                                                 "existing_number_fields": 0, "existing_references": 3})
         command = run.call_args.args[0]
         self.assertIn("-PartialManifest", command)
         self.assertIn("-AnchorNumbers", command)
         self.assertEqual(command[command.index("-ValidationManifestPath") + 1], "C:\\m.json")
+        self.assertEqual(command[command.index("-ExistingNumberFields") + 1], "0")
+        self.assertEqual(command[command.index("-ExistingReferences") + 1], "3")
         parameters = BRIDGE.read_text(encoding="utf-8").split("Set-StrictMode", 1)[0]
-        for name in ("$PartialManifest", "$ValidationManifestPath", "$AnchorNumbers", "$MarksPath"):
+        for name in ("$PartialManifest", "$ValidationManifestPath", "$AnchorNumbers", "$MarksPath",
+                     "$ExistingNumberFields", "$ExistingReferences"):
             self.assertIn(name, parameters)
 
     def test_scan_and_mark_paths_reach_the_bridge(self) -> None:
@@ -424,6 +428,41 @@ class BridgeHelperTests(unittest.TestCase):
         self.assertNotEqual(names[0], names[1])
         for name in names:
             self.assertRegex(name, r"^_MTEq[0-9a-f]{32}$")  # Word allows 40 letters, digits and underscores
+
+    def test_untranslated_tex_and_unmapped_symbols_are_read_from_the_saved_objects(self) -> None:
+        # MathType 7.11.1.462 Toggle TeX output: \mathrm{GELU}(x), \bm{x} (red), a\iff b (diamond),
+        # \lvert x\rvert (red), and an OLE object that is not an equation.
+        fixture = Path(__file__).parent / "fixtures" / "mtef-translation.docx"
+        code = (
+            "$block = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.IfStatementAst]"
+            " -and $n.Extent.Text.StartsWith(\"if (-not ('MathTypeOleData'\") }, $false)\n"
+            ". ([scriptblock]::Create($block.Extent.Text))\n"
+            f"$script:DocumentLocalPath = '{fixture}'\n"
+            # MathType stores the TeX trimmed, so manifest TeX with surrounding spaces still matches.
+            "$manifest = [pscustomobject]@{ equations = @("
+            "[pscustomobject]@{ id = 'gelu'; tex = '\\mathrm{GELU}(x)' },"
+            "[pscustomobject]@{ id = 'bold'; tex = '  \\bm{x} ' },"
+            "[pscustomobject]@{ id = 'iff'; tex = 'a\\iff b' }) }\n"
+            # (manifest, objects with problems in the render's input; -1 outside a render)
+            "foreach ($case in @(@($manifest, -1), @($null, -1), @($null, 0), @($null, 3))) {\n"
+            "  $script:BaselineTranslationProblems = $case[1]\n"
+            "  $errors = [System.Collections.Generic.List[string]]::new()\n"
+            "  $warnings = [System.Collections.Generic.List[string]]::new()\n"
+            "  Add-TexTranslationIssues -Manifest $case[0] -Errors $errors -Warnings $warnings\n"
+            "  @{ errors = @($errors); warnings = @($warnings) } | ConvertTo-Json -Compress\n}\n"
+        )
+        with_manifest, without, new_in_render, already_in_input = [json.loads(line) for line in self.run_functions(
+            ("Write-Log", "Get-TexTranslationProblems", "Add-TexTranslationIssues"), code).splitlines()]
+        self.assertEqual(len(with_manifest["errors"]), 2, with_manifest)
+        self.assertIn("Equation bold (\\bm{x}): MathType kept untranslated TeX as red text (\\bm)", with_manifest["errors"][0] +
+                      with_manifest["errors"][1])
+        self.assertIn("Equation iff (a\\iff b): MathType drew 1 unmapped symbol(s) as a diamond", " ".join(with_manifest["errors"]))
+        self.assertEqual(with_manifest["warnings"], [
+            "A MathType object (TeX: \\lvert x\\rvert) outside the manifest kept untranslated TeX as red text (\\lvert\\rvert)."])
+        self.assertEqual((len(without["errors"]), len(without["warnings"])), (0, 3))
+        # A render whose input held none of them made them: unmatched objects fail too. Ones the input held only warn.
+        self.assertEqual((len(new_in_render["errors"]), len(new_in_render["warnings"])), (3, 0))
+        self.assertEqual((len(already_in_input["errors"]), len(already_in_input["warnings"])), (0, 3))
 
     def test_math_signals_flag_plain_text_mathematics_only(self) -> None:
         code = ("foreach ($text in 'The energy E = mc\u00b2 holds.', 'see Eq. (3) and \u5f0f\uff082\uff09', "

@@ -222,7 +222,9 @@ TOOLS: list[dict[str, Any]] = [
         "description": (
             "Open a DOCX read-only and verify genuine Equation.DSMT4 objects, simple MathType-native "
             "number fields, native references and target bookmarks, sequential numbering, resolved "
-            "markers, and absence of Word built-in OMath equations."
+            "markers, absence of Word built-in OMath equations, and TeX that MathType left untranslated "
+            "(red text) or drew as a diamond. render_mathtype_word_document already returns this report "
+            "for its output; call this tool to re-check a document changed later."
         ),
         "inputSchema": {
             "type": "object",
@@ -233,6 +235,16 @@ TOOLS: list[dict[str, Any]] = [
                     "type": "boolean",
                     "default": False,
                     "description": "Treat markers outside the manifest as warnings and counts as lower bounds.",
+                },
+                "existing_number_fields": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "The render result's existing_number_fields: numbers the input held before it.",
+                },
+                "existing_references": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "The render result's existing_references: references the input held before it.",
                 },
             },
             "required": ["document_path"],
@@ -784,6 +796,9 @@ def _invoke_bridge(action: str, arguments: dict[str, Any], timeout: int | None =
         command.append("-PartialManifest")
     if arguments.get("anchor_numbers"):
         command.append("-AnchorNumbers")
+    for key, switch in (("existing_number_fields", "-ExistingNumberFields"), ("existing_references", "-ExistingReferences")):
+        if isinstance(arguments.get(key), int) and not isinstance(arguments.get(key), bool):
+            command.extend([switch, str(arguments[key])])
 
     effective_timeout = max(timeout or 0, _default_timeout())
     word_pids_before = _process_pids("WINWORD.EXE")
@@ -987,7 +1002,8 @@ def _handle(message: dict[str, Any]) -> dict[str, Any] | None:
                 "serverInfo": {"name": SERVER_NAME, "version": SERVER_VERSION},
                 "instructions": (
                     "Use the matching Word or PowerPoint probe first. Preserve the source, render from a "
-                    "schema v1 manifest, then validate. Large manifests render in resumable batches; use "
+                    "schema v1 manifest, then validate; a Word render result already holds the validation of its "
+                    "output. Large manifests render in resumable batches; use "
                     "background=true with get_mathtype_render_status when equations plus references exceed "
                     "batch_size. DOCX numbering and references must remain MathType-native fields. PPTX "
                     "equations are editable floating Equation.DSMT4 OLE objects. When a result has a notice, "
